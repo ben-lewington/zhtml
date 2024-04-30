@@ -21,13 +21,13 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alc = gpa.allocator();
 
-    var nodes = try alc.alloc(HtmlParser.Node, 1024);
+    const nodes = try alc.alloc(HtmlParser.Node, 1024);
     defer alc.free(nodes);
 
-    var parent_stack = try alc.alloc(*HtmlParser.Node, 50);
+    const parent_stack = try alc.alloc(*HtmlParser.Node, 50);
     defer alc.free(parent_stack);
 
-    var strs = try alc.alloc(u8, 1024);
+    const strs = try alc.alloc(u8, 1024);
     defer alc.free(strs);
 
     var parser = HtmlParser.init(zhtml, strs, nodes, parent_stack);
@@ -78,13 +78,13 @@ fn render(nodes: []const HtmlParser.Node, output: *Buffer(u8), current_parent: ?
 
 fn testHtml(comptime buf_size: comptime_int, comptime input: str, comptime expected: str) !void {
     var alc = std.testing.allocator;
-    var nodes = try alc.alloc(HtmlParser.Node, buf_size);
+    const nodes = try alc.alloc(HtmlParser.Node, buf_size);
     defer alc.free(nodes);
 
-    var parent_stack = try alc.alloc(*HtmlParser.Node, buf_size);
+    const parent_stack = try alc.alloc(*HtmlParser.Node, buf_size);
     defer alc.free(parent_stack);
 
-    var strs = try alc.alloc(u8, buf_size);
+    const strs = try alc.alloc(u8, buf_size);
     defer alc.free(strs);
 
     var parser = HtmlParser.init(input, strs, nodes, parent_stack);

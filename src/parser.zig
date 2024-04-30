@@ -95,7 +95,7 @@ pub fn parseNode(self: *Self) !?void {
     while (peek.tok.kind != .eof) {
         switch (peek.tok.kind) {
             .literal, .qu_balanced => {
-                var esc_lit_start: usize = self.esc_strs.len;
+                const esc_lit_start: usize = self.esc_strs.len;
                 var esc_lit_end: usize = esc_lit_start;
 
                 while (peek.tok.kind == .literal or peek.tok.kind == .qu_balanced) {
