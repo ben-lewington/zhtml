@@ -10,10 +10,8 @@
             <#page-logo {
                 <a
                     href="/"
-                    @{hx}( .get, .target, .swap, .push-url, .swap-oob, .boost )
-                {
-
-                }
+                    @["hx"]( .get, .target, .swap, .push-url, .swap-oob, .boost )
+                { }
             }
         }
     }
