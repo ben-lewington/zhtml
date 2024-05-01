@@ -4,8 +4,6 @@ const assert = std.debug.assert;
 
 const u = usize;
 const str = []const u8;
-const spacing: str = " \r\n\t";
-const quotes: strn(2) = "\"\"".*;
 
 fn strn(comptime len: comptime_int) type {
     return [len]u8;
@@ -37,32 +35,35 @@ pub fn Tokeniser(comptime config: struct {
                 eof,
             },
 
-            const Self = @This();
+            const TSelf = @This();
 
-            pub fn format(
-                value: @This(),
-                comptime _: []const u8,
-                _: std.fmt.FormatOptions,
-                writer: anytype,
-            ) !void {
-                try writer.write("tok[{s}]@#{d}->#{d}", .{
-                    @tagName(value.kind),
-                    value.trim,
-                    value.chop,
-                });
-            }
+            pub const Info = struct {
+                tok: TSelf,
+                trim: u,
+                chop: u,
 
-            pub const TokInfo = struct {
-                inner: Self,
-                start: u,
+                pub fn format(
+                    value: @This(),
+                    comptime _: []const u8,
+                    _: std.fmt.FormatOptions,
+                    writer: anytype,
+                ) !void {
+                    try writer.print(
+                        "tok[{s}]: \"{s}\" @ #{d}->#{d}",
+                        .{
+                            @tagName(value.tok.kind),
+                            value.tok.raw,
+                            value.trim,
+                            value.chop,
+                        },
+                    );
+                }
             };
         };
 
         inline fn isOneOf(ch: u8, comptime chs: str) bool {
             const ret = for (chs) |sp| {
-                if (ch == sp) {
-                    break true;
-                }
+                if (ch == sp) break true;
             } else false;
             return ret;
         }
@@ -73,11 +74,7 @@ pub fn Tokeniser(comptime config: struct {
             return peek.tok;
         }
 
-        pub fn peekNextTok(self: *const @This()) struct {
-            tok: Token,
-            trim: u,
-            chop: u,
-        } {
+        pub fn peekNextTok(self: *const @This()) Token.Info {
             const eof = self.input.len;
             if (self.current == eof) {
                 return .{
@@ -109,8 +106,6 @@ pub fn Tokeniser(comptime config: struct {
 
             var chop: u = trim;
             if (self.input[trim] == config.quotes[0]) {
-                std.log.debug("quoted token, parse until close quote", .{});
-
                 ix += 1;
                 chop = while (ix < eof) : (ix += 1) {
                     if (self.input[ix] == config.quotes[1]) break ix;
@@ -152,11 +147,40 @@ pub fn Tokeniser(comptime config: struct {
                 .kind = .literal,
             }, .trim = trim, .chop = chop };
         }
+
+        // TODO(BL): This self pointer should be const, update internal API so that self.current
+        // can be replaced with an ersatz value
+        pub fn peekNextNTok(self: *@This(), comptime n: comptime_int) [n]Token.Info {
+            const pop = self.current;
+            // we'll monkey around with the tokeniser state in this method, then undo all our changes.
+            defer self.current = pop;
+
+            var ret: [n]Token.Info = undefined;
+
+            inline for (0..n) |i| {
+                ret[i] = .{
+                    .tok = .{ .kind = .eof, .raw = "" },
+                    .trim = self.input.len,
+                    .chop = self.input.len,
+                };
+            }
+
+            for (0..n) |i| {
+                const t = self.peekNextTok();
+                if (t.tok.kind == .eof) break;
+                ret[i] = t;
+                self.current = t.chop;
+            }
+
+            return ret;
+        }
     };
 }
 
 test "tokeniser" {
     const input = "r<bca \"foo bar baz\"";
+    const spacing: str = " \r\n\t";
+    const quotes: strn(2) = "\"\"".*;
 
     var toks = Tokeniser(.{
         .spacing = spacing,
@@ -165,7 +189,11 @@ test "tokeniser" {
     }).init(input);
     var tok = toks.peekNextTok();
     while (tok.tok.kind != .eof) {
-        std.log.debug("tok[{s}]: \"{s}\", remaining \"{s}\"", .{ @tagName(tok.tok.kind), tok.tok.raw, input[tok.chop..] });
+        std.log.debug("tok[{s}]: \"{s}\", remaining \"{s}\"", .{
+            @tagName(tok.tok.kind),
+            tok.tok.raw,
+            input[tok.chop..],
+        });
         toks.current = tok.chop;
         tok = toks.peekNextTok();
     }
