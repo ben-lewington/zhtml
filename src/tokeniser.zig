@@ -49,17 +49,46 @@ pub fn Tokeniser(comptime config: struct {
                     writer: anytype,
                 ) !void {
                     try writer.print(
-                        "tok[{s}]: \"{s}\" @ #{d}->#{d}",
+                        "{}@#{d}->#{d}",
                         .{
-                            @tagName(value.tok.kind),
-                            value.tok.raw,
+                            value.tok,
                             value.trim,
                             value.chop,
                         },
                     );
                 }
             };
+            pub fn format(
+                value: @This(),
+                comptime _: []const u8,
+                _: std.fmt.FormatOptions,
+                writer: anytype,
+            ) !void {
+                try writer.print(
+                    "tok[{s}]{{ \"{s}\" }}",
+                    .{
+                        @tagName(value.kind),
+                        value.raw,
+                    },
+                );
+            }
         };
+
+        pub fn Location(comptime offset: [2]comptime_int) type {
+            return struct {
+                row: usize,
+                col: usize,
+
+                pub fn format(
+                    value: @This(),
+                    comptime _: []const u8,
+                    _: std.fmt.FormatOptions,
+                    writer: anytype,
+                ) !void {
+                    try writer.print("{d}:{d}:", .{ value.row + offset[0], value.col + offset[1] });
+                }
+            };
+        }
 
         inline fn isOneOf(ch: u8, comptime chs: str) bool {
             const ret = for (chs) |sp| {
@@ -174,9 +203,30 @@ pub fn Tokeniser(comptime config: struct {
 
             return ret;
         }
+
+        pub fn getLocation(self: *const @This(), offset: usize) Location(.{ 1, 1 }) {
+            if (offset >= self.input.len) return .{ .row = 0, .col = 0 };
+            var row: usize = 0;
+            var col: usize = 0;
+            var idx: usize = 0;
+            while (idx < offset) : (idx += 1) {
+                switch (self.input[idx]) {
+                    '\n', '\r' => |ch| {
+                        if (ch == '\r') {
+                            if (idx + 1 <= self.current) {
+                                if (self.input[idx + 1] == '\n') idx += 1;
+                            }
+                        }
+                        row += 1;
+                        col = 0;
+                    },
+                    else => col += 1,
+                }
+            }
+            return .{ .row = row, .col = col };
+        }
     };
 }
-
 test "tokeniser" {
     const input = "r<bca \"foo bar baz\"";
     const spacing: str = " \r\n\t";
@@ -189,11 +239,6 @@ test "tokeniser" {
     }).init(input);
     var tok = toks.peekNextTok();
     while (tok.tok.kind != .eof) {
-        std.log.debug("tok[{s}]: \"{s}\", remaining \"{s}\"", .{
-            @tagName(tok.tok.kind),
-            tok.tok.raw,
-            input[tok.chop..],
-        });
         toks.current = tok.chop;
         tok = toks.peekNextTok();
     }

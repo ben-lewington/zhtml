@@ -1,4 +1,5 @@
 const std = @import("std");
+const log = @import("log.zig");
 const big_enough = @import("big_enough.zig");
 const escape = @import("escape.zig");
 
@@ -14,14 +15,12 @@ const HtmlTokeniser = toks.Tokeniser(.{
 });
 
 const str = []const u8;
-const log = std.log;
 const assert = std.debug.assert;
 
 tokens: HtmlTokeniser,
-
 esc_strs: big_enough.Buffer(u8),
-attrs: big_enough.Buffer(NodeAttrs),
 nodes: big_enough.Buffer(Node),
+attrs: big_enough.Buffer(NodeAttrs),
 parent_stack: big_enough.Stack(*Node),
 
 const Self = @This();
@@ -87,6 +86,24 @@ pub const SyntaxSym = enum(u8) {
     }
 };
 
+pub const ParseNodeResult = struct { at: HtmlTokeniser.Token.Info, status: enum {
+    ok,
+    unexpected_symbol_while_parsing_node,
+    expected_push_or_pinch_while_parsing_node_got_def,
+    expected_push_or_pinch_while_parsing_node_got_pop,
+    unexpected_symbol_while_parsing_node_attributes,
+    unbalanced_quoted_literal,
+    expected_end_of_node_definition_but_got_eof,
+    expected_attribute_name_found_quoted_literal,
+    expected_attribute_name_found_symbol,
+    expected_attribute_name_found_eof,
+    expected_attribute_value_found_unquoted_literal,
+    expected_attribute_value_found_symbol,
+    expected_attribute_value_found_eof,
+    tag_name_cannot_be_quoted_literal,
+    unbalanced_nodes,
+} };
+
 pub fn init(tokens: str, strs: []u8, nodes: []Node, attrs: []NodeAttrs, parent_stack: []*Node) Self {
     return .{
         .tokens = HtmlTokeniser.init(tokens),
@@ -97,11 +114,17 @@ pub fn init(tokens: str, strs: []u8, nodes: []Node, attrs: []NodeAttrs, parent_s
     };
 }
 
-pub fn parseNode(self: *Self) !?void {
+pub fn parseNode(self: *Self) ?ParseNodeResult {
     var peek = self.tokens.peekNextTok();
-    if (peek.tok.kind == .eof or self.tokens.current > self.tokens.input.len) return null;
+    if (peek.tok.kind == .eof) {
+        if (self.parent_stack.peek()) |p| {
+            log.debug("{}", .{p.data});
+            return .{ .at = peek, .status = .unbalanced_nodes };
+        }
+        return null;
+    }
 
-    std.log.debug("{}, remaining \"{s}\"", .{
+    log.debug("{}, remaining \"{s}\"", .{
         peek,
         self.tokens.input[peek.chop..],
     });
@@ -109,52 +132,15 @@ pub fn parseNode(self: *Self) !?void {
     while (peek.tok.kind != .eof) {
         switch (peek.tok.kind) {
             .literal, .qu_balanced => {
-                const esc_lit_start: usize = self.esc_strs.len;
-                var esc_lit_end: usize = esc_lit_start;
-
-                while (peek.tok.kind == .literal or peek.tok.kind == .qu_balanced) {
-                    var lit: str = undefined;
-                    switch (peek.tok.kind) {
-                        .literal => lit = peek.tok.raw,
-                        .qu_balanced => lit = peek.tok.raw[1 .. peek.tok.raw.len - 1],
-                        else => unreachable,
-                    }
-                    const esc = escape.escapeNeeded(lit);
-                    if (esc) {
-                        const esc_res = escape.escapeToStr(lit, &self.esc_strs);
-                        self.esc_strs.push(' ');
-                        esc_lit_end += esc_res.len + 1;
-                    } else {
-                        self.esc_strs.extend(lit);
-                        self.esc_strs.push(' ');
-                        esc_lit_end += lit.len + 1;
-                    }
-
-                    self.tokens.current = peek.chop;
-                    peek = self.tokens.peekNextTok();
-
-                    std.log.debug("{}, remaining \"{s}\"", .{
-                        peek,
-                        self.tokens.input[peek.chop..],
-                    });
-                }
-
-                esc_lit_end -= 1;
-                const parent = self.parent_stack.peek();
-                const node = .{
-                    .parent = parent,
-                    .data = .{
-                        .literal = self.esc_strs.inner[esc_lit_start..esc_lit_end],
-                    },
-                };
+                const node = self.parseLiteral(&peek);
                 self.nodes.push(node);
 
-                std.log.info("pushed node[literal]: parent?: {any}, literal: \"{s}\"", .{
+                log.info("parsed node[literal]: parent?: {any}, literal: \"{s}\"", .{
                     node.parent == null,
                     node.data.literal,
                 });
 
-                return;
+                return .{ .at = peek, .status = .ok };
             },
             .symbol => {
                 var sym: SyntaxSym = @enumFromInt(peek.tok.raw[0]);
@@ -173,7 +159,6 @@ pub fn parseNode(self: *Self) !?void {
 
                                 tag = self.esc_strs.inner[write_str_start..self.esc_strs.len];
 
-                                std.log.debug("parsed tag \"{s}\"", .{tag});
                                 //  Here, `tag` is well formed, need to parse the node attrs.
                                 //  an attribute declaration will be of the form:
                                 //      - key="value" (double quotes remove parsing ambiguities)
@@ -189,6 +174,11 @@ pub fn parseNode(self: *Self) !?void {
                                 //  or `.qu_balanced`.
                                 const attrs_start = peek.chop;
 
+                                log.debug("parsed {} as tag; finding end of attrs in remaining: \"{s}\"", .{
+                                    peek,
+                                    self.tokens.input[peek.chop..],
+                                });
+
                                 self.tokens.current = peek.chop;
                                 peek = self.tokens.peekNextTok();
                                 while (peek.tok.kind != .eof) {
@@ -197,41 +187,42 @@ pub fn parseNode(self: *Self) !?void {
                                             sym = @enumFromInt(peek.tok.raw[0]);
                                             switch (sym) {
                                                 .push, .pinch => break,
-                                                else => return error.unexpected_symbol_while_parsing_node_attributes,
+                                                else => return .{ .at = peek, .status = .unexpected_symbol_while_parsing_node_attributes },
                                             }
                                         },
                                         .literal, .qu_balanced => {},
-                                        .qu_unbalanced => return error.unbalanced_quoted_strings,
-                                        .eof => return error.expected_end_of_node_definition_but_got_eof,
+                                        .qu_unbalanced => return .{
+                                            .at = peek,
+                                            .status = .unbalanced_quoted_literal,
+                                        },
+                                        .eof => return .{ .at = peek, .status = .expected_end_of_node_definition_but_got_eof },
                                     }
                                     self.tokens.current = peek.chop;
                                     peek = self.tokens.peekNextTok();
 
-                                    std.log.debug("{}, remaining \"{s}\"", .{
+                                    log.debug("testing {}, remaining \"{s}\"", .{
                                         peek,
                                         self.tokens.input[peek.chop..],
                                     });
                                 }
-                                std.log.debug(
-                                    "broke with {}\n    - attrs @ #{}->#{}\n    - \"{s}\"",
-                                    .{
-                                        peek,
-                                        attrs_start,
-                                        peek.trim,
-                                        self.tokens.input[attrs_start..peek.trim],
-                                    },
-                                );
                                 // Here, `peek.trim` points to the end of the attr declarations,
                                 // just before we finish defining the node.
+                                const raw_attrs = self.tokens.input[attrs_start..peek.trim];
+                                log.debug(
+                                    "found attrs{{ \"{s}\" }}@#{d}->#{d}, remaining: \"{s}\"",
+                                    .{ raw_attrs, attrs_start, peek.trim, self.tokens.input[peek.trim..] },
+                                );
 
                                 const attrs_slice_start = self.attrs.len;
 
+                                // tokenise the raw_attrs, using only `=` as a symbol.
                                 var parse_attrs = toks.Tokeniser(.{
                                     .spacing = WHITESPACE,
                                     .quotes = QUOTES,
                                     .symbols = "=",
                                 }).init(self.tokens.input[attrs_start..peek.trim]);
 
+                                // walk the tokens in a window of three tokens
                                 var apeek3 = parse_attrs.peekNextNTok(3);
                                 while (apeek3[0].tok.kind != .eof) {
                                     var attr_name: str = undefined;
@@ -239,10 +230,10 @@ pub fn parseNode(self: *Self) !?void {
                                     // TODO(BL): need to validate this input.
                                     switch (apeek3[0].tok.kind) {
                                         .literal => attr_name = apeek3[0].tok.raw,
-                                        .qu_balanced => return error.expected_attribute_name_found_quoted_literal,
-                                        .symbol => return error.expected_attribute_name_found_symbol,
-                                        .qu_unbalanced => return error.unbalanced_quoted_strings,
-                                        .eof => return error.expected_attribute_name_found_eof,
+                                        .qu_balanced => return .{ .at = apeek3[0], .status = .expected_attribute_name_found_quoted_literal },
+                                        .symbol => return .{ .at = apeek3[0], .status = .expected_attribute_name_found_symbol },
+                                        .qu_unbalanced => return .{ .at = apeek3[0], .status = .unbalanced_quoted_literal },
+                                        .eof => return .{ .at = apeek3[0], .status = .expected_attribute_name_found_eof },
                                     }
 
                                     const attr_str = self.esc_strs.len;
@@ -256,7 +247,7 @@ pub fn parseNode(self: *Self) !?void {
                                             .key = attr_name,
                                             .value = null,
                                         };
-                                        std.log.debug("parsed attr {}", .{na});
+                                        log.debug("parsed attr {}", .{na});
                                         self.attrs.push(na);
 
                                         apeek3 = parse_attrs.peekNextNTok(3);
@@ -273,13 +264,13 @@ pub fn parseNode(self: *Self) !?void {
                                                 .key = attr_name,
                                                 .value = self.esc_strs.inner[attrv_str..self.esc_strs.len],
                                             };
-                                            std.log.debug("parsed attr {}", .{na});
+                                            log.debug("parsed attr {}", .{na});
                                             self.attrs.push(na);
                                         },
-                                        .literal => return error.expected_attribute_value_found_unquoted_literal,
-                                        .symbol => return error.expected_attribute_value_found_symbol,
-                                        .qu_unbalanced => return error.unbalanced_quoted_strings,
-                                        .eof => return error.expected_attribute_value_found_eof,
+                                        .literal => return .{ .at = apeek3[2], .status = .expected_attribute_value_found_unquoted_literal },
+                                        .symbol => return .{ .at = apeek3[2], .status = .expected_attribute_value_found_symbol },
+                                        .qu_unbalanced => return .{ .at = apeek3[2], .status = .unbalanced_quoted_literal },
+                                        .eof => return .{ .at = apeek3[2], .status = .expected_attribute_value_found_eof },
                                     }
 
                                     apeek3 = parse_attrs.peekNextNTok(3);
@@ -289,7 +280,7 @@ pub fn parseNode(self: *Self) !?void {
 
                                 if (attrs_slice_start < self.attrs.len) attrs = node_attrs;
 
-                                std.log.debug("{}, {s}", .{ peek, node_attrs });
+                                log.debug("{}, {s}", .{ peek, node_attrs });
 
                                 //  after we have a tag name, there are two valid possibilities:
                                 //      - a push or pinch symbol
@@ -314,27 +305,27 @@ pub fn parseNode(self: *Self) !?void {
 
                                                 self.nodes.push(node);
 
-                                                std.log.debug("pushed node[node]: parent?: {any}, <{s}{s}>", .{
+                                                log.debug("parsed node[node]: parent?: {any}, <{s}{s}>", .{
                                                     node.parent != null,
                                                     node.data.node.tag,
                                                     if (node.data.node.self_closing) "/" else "",
                                                 });
 
                                                 const lookup_node = &self.nodes.inner[node_ix];
-                                                self.parent_stack.push(lookup_node);
+                                                if (sym == .push) self.parent_stack.push(lookup_node);
 
-                                                return;
+                                                return .{ .at = peek, .status = .ok };
                                             },
-                                            .pop => return error.expected_push_or_pinch_while_parsing_node_got_pop,
-                                            .def => return error.expected_push_or_pinch_while_parsing_node_got_def,
+                                            .pop => return .{ .at = peek, .status = .expected_push_or_pinch_while_parsing_node_got_pop },
+                                            .def => return .{ .at = peek, .status = .expected_push_or_pinch_while_parsing_node_got_def },
                                         }
                                     },
                                     else => unreachable,
                                 }
                             },
-                            .qu_balanced => return error.expected_tag_name_found_quoted_literal,
-                            .qu_unbalanced => return error.unbalanced_quoted_strings,
-                            .symbol => return error.unexpected_symbol_while_parsing_node,
+                            .qu_balanced => return .{ .at = peek, .status = .tag_name_cannot_be_quoted_literal },
+                            .qu_unbalanced => return .{ .at = peek, .status = .unbalanced_quoted_literal },
+                            .symbol => return .{ .at = peek, .status = .unexpected_symbol_while_parsing_node },
                             .eof => return null,
                         }
                         unreachable;
@@ -347,14 +338,55 @@ pub fn parseNode(self: *Self) !?void {
 
                         continue;
                     },
-                    else => unreachable,
+                    else => return .{ .at = peek, .status = .unexpected_symbol_while_parsing_node },
                 }
             },
             .eof => break,
-            .qu_unbalanced => return error.unbalanced_quoted_strings,
+            .qu_unbalanced => return .{ .at = peek, .status = .unbalanced_quoted_literal },
         }
     }
     return null;
+}
+
+fn parseLiteral(self: *Self, peek: *HtmlTokeniser.Token.Info) Node {
+    assert(peek.tok.kind == .literal or peek.tok.kind == .qu_balanced);
+
+    const olit_s: usize = self.esc_strs.len;
+    var olit_e: usize = olit_s;
+
+    while (peek.tok.kind == .literal or peek.tok.kind == .qu_balanced) {
+        const lit = switch (peek.tok.kind) {
+            .literal => peek.tok.raw,
+            .qu_balanced => peek.tok.raw[1 .. peek.tok.raw.len - 1],
+            else => unreachable,
+        };
+
+        log.debug("literal: {s}", .{lit});
+
+        if (escape.escapeNeeded(lit)) {
+            const esc_res = escape.escapeToStr(lit, &self.esc_strs);
+            self.esc_strs.push(' ');
+            olit_e += esc_res.len + 1;
+        } else {
+            self.esc_strs.extend(lit);
+            self.esc_strs.push(' ');
+            olit_e += lit.len + 1;
+        }
+
+        self.tokens.current = peek.chop;
+        peek.* = self.tokens.peekNextTok();
+
+        log.debug("{}, remaining \"{s}\"", .{
+            peek,
+            self.tokens.input[peek.chop..],
+        });
+    }
+    // get rid of the trailing space
+    olit_e -= 1;
+
+    return .{ .parent = self.parent_stack.peek(), .data = .{
+        .literal = self.esc_strs.inner[olit_s..olit_e],
+    } };
 }
 
 pub fn numOccurances(tokens: str, ch: u8) usize {
@@ -363,44 +395,6 @@ pub fn numOccurances(tokens: str, ch: u8) usize {
         if (ich == ch) i += 1;
     }
     return i;
-}
-
-pub fn FileLoc(comptime offset: [2]comptime_int) type {
-    return struct {
-        row: usize,
-        col: usize,
-
-        pub fn format(
-            value: @This(),
-            comptime _: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            try writer.print(" {d}:{d}:", .{ value.row + offset[0], value.col + offset[1] });
-        }
-    };
-}
-
-pub fn getLocation(self: *const Self, offset: usize) FileLoc(.{ 1, 1 }) {
-    if (offset >= self.tokens.len) return .{ .row = 0, .col = 0 };
-    var row: usize = 0;
-    var col: usize = 0;
-    var idx: usize = 0;
-    while (idx < offset) : (idx += 1) {
-        switch (self.tokens[idx]) {
-            '\n', '\r' => |ch| {
-                if (ch == '\r') {
-                    if (idx + 1 <= self.current) {
-                        if (self.tokens[idx + 1] == '\n') idx += 1;
-                    }
-                }
-                row += 1;
-                col = 0;
-            },
-            else => col += 1,
-        }
-    }
-    return .{ .row = row, .col = col };
 }
 
 pub fn outputSize(tokens: str) !struct {
@@ -444,30 +438,10 @@ pub fn outputSize(tokens: str) !struct {
                     null, .literal => {
                         cur_depth -= 1;
                     },
-                    .node => return error.CloseNodeBeforeCloseHeader,
+                    .node => return .CloseNodeBeforeCloseHeader,
                 }
             },
             else => {},
         }
     }
 }
-
-// const MarkupSyntax = union(enum) {
-//     tag_name: Ident,
-//     attribute: Attribute,
-//     literal: str,
-//     symbol: SyntaxSym,
-//
-//     const Ident = struct {
-//         literally: str,
-//     };
-//
-//     const Attribute = struct {
-//         key: Ident,
-//         value: Literal,
-//     };
-//
-//     const Literal = struct {
-//         literally: str,
-//     };
-// };
