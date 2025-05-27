@@ -2,99 +2,69 @@ const std = @import("std");
 const log = std.log;
 const assert = std.debug.assert;
 
-const u = usize;
-const str = []const u8;
-
-fn strn(comptime len: comptime_int) type {
-    return [len]u8;
-}
-
 pub fn Tokeniser(comptime config: struct {
-    spacing: str,
-    quotes: strn(2),
-    symbols: str,
-}) type {
-    return struct {
-        input: str,
-        current: u,
-
-        pub fn init(input: str) @This() {
-            return .{
-                .input = input,
-                .current = 0,
-            };
+    spacing: []const u8 = " \t\n\r",
+    quotes: [2]u8 = "\"\"".*,
+}, comptime Symbols: type) type {
+    const enum_ti = @typeInfo(Symbols).@"enum";
+    if (enum_ti.tag_type != u8) @compileError("symbol enum must have a u8 representation");
+    const sym_arr = b: {
+        var k: [enum_ti.fields.len][]const u8 = undefined;
+        var v: [enum_ti.fields.len]u8 = undefined;
+        for (enum_ti.fields, 0..) |f, i| {
+            k[i] = f.name;
+            v[i] = @intCast(f.value);
         }
+        break :b .{
+            .keys = k,
+            .values = v,
+        };
+    };
+
+    return struct {
+        input: []const u8,
+        current: u32 = 0,
 
         pub const Token = struct {
-            raw: str,
+            raw: []const u8,
             kind: enum {
-                qu_balanced,
-                qu_unbalanced,
-                literal,
+                quote,
+                token,
                 symbol,
                 eof,
             },
 
-            const TSelf = @This();
-
             pub const Info = struct {
-                tok: TSelf,
-                trim: u,
-                chop: u,
+                tok: Token,
+                trim: u32,
+                chop: u32,
 
-                pub fn format(
-                    value: @This(),
-                    comptime _: []const u8,
-                    _: std.fmt.FormatOptions,
-                    writer: anytype,
-                ) !void {
-                    try writer.print(
-                        "{}@#{d}->#{d}",
-                        .{
-                            value.tok,
-                            value.trim,
-                            value.chop,
-                        },
-                    );
+                pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                    try writer.print("{}@#{d}->#{d}", .{ value.tok, value.trim, value.chop });
                 }
             };
-            pub fn format(
-                value: @This(),
-                comptime _: []const u8,
-                _: std.fmt.FormatOptions,
-                writer: anytype,
-            ) !void {
-                try writer.print(
-                    "tok[{s}]{{ \"{s}\" }}",
-                    .{
-                        @tagName(value.kind),
-                        value.raw,
-                    },
-                );
+
+            pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (value.kind == .symbol) {
+                    try writer.print(
+                        "[sym={s}({s})]",
+                        .{ @tagName(@as(Symbols, @enumFromInt(value.raw[0]))), value.raw },
+                    );
+                } else {
+                    try writer.print(
+                        "[{s}=\"{s}\"]",
+                        .{ @tagName(value.kind), value.raw },
+                    );
+                }
             }
         };
 
-        pub fn Location(comptime offset: [2]comptime_int) type {
-            return struct {
-                row: usize,
-                col: usize,
-
-                pub fn format(
-                    value: @This(),
-                    comptime _: []const u8,
-                    _: std.fmt.FormatOptions,
-                    writer: anytype,
-                ) !void {
-                    try writer.print("{d}:{d}:", .{ value.row + offset[0], value.col + offset[1] });
-                }
-            };
-        }
-
-        inline fn isOneOf(ch: u8, comptime chs: str) bool {
-            const ret = for (chs) |sp| {
-                if (ch == sp) break true;
-            } else false;
-            return ret;
+        inline fn isOneOf(ch: u8, comptime chs: []const u8) bool {
+            var r = false;
+            inline for (chs) |sp| {
+                if (ch == sp) r = true;
+            }
+            return r;
         }
 
         pub fn next(self: *@This()) ?Token {
@@ -111,14 +81,14 @@ pub fn Tokeniser(comptime config: struct {
                         .raw = "",
                         .kind = .eof,
                     },
-                    .trim = eof,
-                    .chop = eof,
+                    .trim = @intCast(eof),
+                    .chop = @intCast(eof),
                 };
             }
             assert(self.current < eof);
 
-            var ix: u = self.current;
-            var trim: u = ix;
+            var ix: u32 = self.current;
+            var trim: u32 = ix;
 
             if (isOneOf(self.input[self.current], config.spacing)) {
                 trim = while (ix < eof) : (ix += 1) {
@@ -129,11 +99,11 @@ pub fn Tokeniser(comptime config: struct {
                         .kind = .eof,
                     },
                     .trim = trim,
-                    .chop = eof,
+                    .chop = @intCast(eof),
                 };
             }
 
-            var chop: u = trim;
+            var chop: u32 = trim;
             if (self.input[trim] == config.quotes[0]) {
                 ix += 1;
                 chop = while (ix < eof) : (ix += 1) {
@@ -141,18 +111,18 @@ pub fn Tokeniser(comptime config: struct {
                 } else return .{
                     .tok = .{
                         .raw = self.input[trim..],
-                        .kind = .qu_unbalanced,
+                        .kind = .quote,
                     },
                     .trim = trim,
-                    .chop = eof,
+                    .chop = @intCast(eof),
                 };
                 ix += 1;
 
                 return .{ .tok = .{
                     .raw = self.input[trim .. chop + 1],
-                    .kind = .qu_balanced,
+                    .kind = .quote,
                 }, .trim = trim, .chop = chop + 1 };
-            } else if (isOneOf(self.input[trim], config.symbols)) {
+            } else if (isOneOf(self.input[trim], &sym_arr.values)) {
                 ix += 1;
 
                 return .{ .tok = .{
@@ -164,16 +134,16 @@ pub fn Tokeniser(comptime config: struct {
             chop = while (ix < eof) : (ix += 1) {
                 if (isOneOf(
                     self.input[ix],
-                    config.spacing ++ config.symbols,
+                    config.spacing ++ &sym_arr.values,
                 )) break ix;
             } else return .{ .tok = .{
                 .raw = self.input[trim..],
-                .kind = .literal,
-            }, .trim = trim, .chop = eof };
+                .kind = .token,
+            }, .trim = trim, .chop = @intCast(eof) };
 
             return .{ .tok = .{
                 .raw = self.input[trim..chop],
-                .kind = .literal,
+                .kind = .token,
             }, .trim = trim, .chop = chop };
         }
 
@@ -189,8 +159,8 @@ pub fn Tokeniser(comptime config: struct {
             inline for (0..n) |i| {
                 ret[i] = .{
                     .tok = .{ .kind = .eof, .raw = "" },
-                    .trim = self.input.len,
-                    .chop = self.input.len,
+                    .trim = @intCast(self.input.len),
+                    .chop = @intCast(self.input.len),
                 };
             }
 
@@ -204,19 +174,28 @@ pub fn Tokeniser(comptime config: struct {
             return ret;
         }
 
-        pub fn getLocation(self: *const @This(), offset: usize) Location(.{ 1, 1 }) {
+        pub fn getLocation(self: *const @This(), offset: u32) struct {
+            row: u32,
+            col: u32,
+
+            pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.print("{d}:{d}:", .{ value.row + 1, value.col + 1 });
+            }
+        } {
             if (offset >= self.input.len) return .{ .row = 0, .col = 0 };
-            var row: usize = 0;
-            var col: usize = 0;
-            var idx: usize = 0;
+            var row: u32 = 0;
+            var col: u32 = 0;
+            var idx: u32 = 0;
             while (idx < offset) : (idx += 1) {
                 switch (self.input[idx]) {
-                    '\n', '\r' => |ch| {
-                        if (ch == '\r') {
-                            if (idx + 1 <= self.current) {
-                                if (self.input[idx + 1] == '\n') idx += 1;
-                            }
+                    '\r' => {
+                        if (idx + 1 <= self.current) {
+                            if (self.input[idx + 1] == '\n') idx += 1;
                         }
+                        row += 1;
+                        col = 0;
+                    },
+                    '\n' => {
                         row += 1;
                         col = 0;
                     },
@@ -226,20 +205,4 @@ pub fn Tokeniser(comptime config: struct {
             return .{ .row = row, .col = col };
         }
     };
-}
-test "tokeniser" {
-    const input = "r<bca \"foo bar baz\"";
-    const spacing: str = " \r\n\t";
-    const quotes: strn(2) = "\"\"".*;
-
-    var toks = Tokeniser(.{
-        .spacing = spacing,
-        .quotes = quotes,
-        .symbols = "",
-    }).init(input);
-    var tok = toks.peekNextTok();
-    while (tok.tok.kind != .eof) {
-        toks.current = tok.chop;
-        tok = toks.peekNextTok();
-    }
 }

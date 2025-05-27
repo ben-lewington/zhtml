@@ -1,18 +1,24 @@
-<html lang="en" {
-    <head {
-        <meta charset="UTF-8" |
-        <meta name="viewport" content="width=device-width, initial-scale=1" |
-        <title { My Title }
-        <link href="css/style.css" rel="stylesheet" |
-    }
-    <body .container {
-        <header data-page-header {
-            <#page-logo {
-                <a
-                    href="/"
-                    @["hx"]( .get, .target, .swap, .push-url, .swap-oob, .boost )
-                { (.foobar) }
-            }
-        }
-    }
-}
+:doctype html!
+# a comment #
+<html lang="en" data-fallback .font-sans .antialiased .w-screen |
+    <head |
+        <script | document.documentElement.removeAttribute('data-fallback')>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <link href="/global.css" rel="stylesheet">
+        <title|My Title>
+    >
+    <body |
+        <header .flex.justify-center | <.max-w-md.lg:max-w-6xl | Header Content >>
+        <main #main .flex.justify-center |
+            <.max-w-md.lg:max-w-6xl|
+                Main Content
+                @{ .content }
+                @if ({.y}) { <a|> }
+                @if ({.t}) |t| { <a|@{ t }> }
+                @for ({.xs}, 0..) |x, i| { <tag @{x} |@{i}-th node> }
+            >
+        >
+        <footer .flex.justify-center | <.max-w-md.lg:max-w-6xl | Footer Content >>
+    >
+>
