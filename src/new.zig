@@ -26,9 +26,11 @@ const Tokeniser = @import("tokeniser.zig").Tokeniser;
 const Allocator = std.mem.Allocator;
 const parser = @import("parser.zig");
 const Tree = parser.Tree;
+const Atom = @TypeOf(.atom);
 
-pub fn Markup(comptime roots: []const Tree.Inner) type {
+pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
     return struct {
+        pub const identifier = @tagName(id);
         pub fn render(writer: anytype) !void {
             inline for (roots) |node| {
                 const inner = node.raw[0 .. node.attr_start orelse node.raw.len];
@@ -37,9 +39,9 @@ pub fn Markup(comptime roots: []const Tree.Inner) type {
                     .comment => try writer.print("<!--{s}-->", .{inner}),
                     .text => try writer.print("{s}", .{inner}),
                     .tag => {
-                        try writer.print("<{s}>", .{inner});
+                        try writer.print("<{s}>", .{node.raw});
                         if (node.branch) |child| {
-                            try Markup(child).render(writer);
+                            try Template(id, child).render(writer);
                             try writer.print("</{s}>", .{inner});
                         }
                     },
@@ -54,7 +56,7 @@ pub fn main() !void {
     defer arena.deinit();
 
     const ir = comptime parser.parseTopNodeComptime(snapshot_tests[5].input) catch unreachable;
-    const templ = Markup(ir);
+    const templ = Template(.interp, ir);
 
     const stdout = std.io.getStdOut().writer();
     try templ.render(stdout);
@@ -62,13 +64,13 @@ pub fn main() !void {
 }
 
 const snapshot_tests: []const struct {
-    tag: []const u8,
+    tag: Atom,
     input: []const u8,
     expected: []const u8,
     args: ?struct { content: []const u8 } = null,
 } = &.{
     .{
-        .tag = "text node",
+        .tag = .@"text node",
         .input =
         \\this is a string of tokens
         ,
@@ -77,7 +79,7 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = "meta and comments",
+        .tag = .@"meta and comments",
         .input =
         \\!DOCTYPE HTML!
         \\#a comment#
@@ -87,7 +89,7 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = "simple tag",
+        .tag = .@"simple tag",
         .input =
         \\<a|>
         ,
@@ -96,7 +98,7 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = "nested tag",
+        .tag = .@"nested tag",
         .input =
         \\<a href="/"|
         \\    <b|
@@ -109,7 +111,7 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = "advanced",
+        .tag = .advanced,
         .input =
         \\<a foo| Hello >
         \\<b bar>
@@ -120,7 +122,7 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = "interp",
+        .tag = .interp,
         .input =
         \\<a foo| @{ .content }>
         ,
@@ -146,10 +148,11 @@ test "snapshot" {
     };
 
     inline for (snapshot_tests, generated_ir) |snapshot, ir| {
+        std.log.debug("{s}", .{@tagName(snapshot.tag)});
         var out_buf = std.ArrayList(u8).init(alc);
         defer out_buf.deinit();
         const w = out_buf.writer();
-        try Markup(ir.root).render(w);
+        try Template(snapshot.tag, ir.root).render(w);
         const output = out_buf.items[0..out_buf.items.len];
         try std.testing.expectEqualSlices(u8, snapshot.expected, output);
     }
