@@ -16,16 +16,16 @@ pub const Tree = struct {
         branch: ?[]const Inner = null,
 
         pub fn format(value: Inner, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try writer.print("node[{s}] \"{s}\".", .{ @tagName(value.kind), value.raw });
-            if (value.branch) |ns| {
-                try writer.print("open with branch: <\n", .{});
-                for (ns) |n| {
-                    try writer.print("{}", .{n});
-                }
-                try writer.print(">node[{s}] \"{s}\".\n", .{ @tagName(value.kind), value.raw });
-            } else {
-                try writer.print("\n", .{});
+            try writer.print("\n", .{});
+            if (value.branch) |_| {
+                try writer.print("<", .{});
             }
+            try writer.print("node[{s}] \"{s}\"", .{ @tagName(value.kind), value.raw });
+            if (value.branch) |ns| {
+                for (ns) |n| try writer.print(" {{    {}", .{n});
+                try writer.print("\n}} node[{s}]>", .{ @tagName(value.kind) });
+            }
+            try writer.print("", .{});
         }
     };
 

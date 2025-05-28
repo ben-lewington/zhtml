@@ -56,6 +56,9 @@ pub fn main() !void {
     defer arena.deinit();
 
     const ir = comptime parser.parseTopNodeComptime(snapshot_tests[5].input) catch unreachable;
+    for (ir) |n| {
+        std.log.debug("{}", .{n});
+    }
     const templ = Template(.interp, ir);
 
     const stdout = std.io.getStdOut().writer();
@@ -124,7 +127,7 @@ const snapshot_tests: []const struct {
     .{
         .tag = .interp,
         .input =
-        \\<a foo| @{ .content }>
+        \\<a foo @{.x}| @{ .content }>
         ,
         .args = .{
             .content = "World",
