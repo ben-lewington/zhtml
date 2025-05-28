@@ -31,15 +31,16 @@ pub fn Markup(comptime roots: []const Tree.Inner) type {
     return struct {
         pub fn render(writer: anytype) !void {
             inline for (roots) |node| {
+                const inner = node.raw[0 .. node.attr_start orelse node.raw.len];
                 switch (node.kind) {
-                    .meta => try writer.print("<!{s}>", .{node.raw}),
-                    .comment => try writer.print("<!--{s}-->", .{node.raw}),
-                    .text => try writer.print("{s}", .{node.raw}),
+                    .meta => try writer.print("<!{s}>", .{inner}),
+                    .comment => try writer.print("<!--{s}-->", .{inner}),
+                    .text => try writer.print("{s}", .{inner}),
                     .tag => {
-                        try writer.print("<{s}>", .{node.raw});
+                        try writer.print("<{s}>", .{inner});
                         if (node.branch) |child| {
                             try Markup(child).render(writer);
-                            try writer.print("</{s}>", .{node.raw[0 .. node.attr_start orelse node.raw.len]});
+                            try writer.print("</{s}>", .{inner});
                         }
                     },
                 }
@@ -52,7 +53,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const ir = comptime parser.parseTopNodeComptime(snapshot_tests[4].input) catch unreachable;
+    const ir = comptime parser.parseTopNodeComptime(snapshot_tests[5].input) catch unreachable;
     const templ = Markup(ir);
 
     const stdout = std.io.getStdOut().writer();
