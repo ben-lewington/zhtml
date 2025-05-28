@@ -11,6 +11,7 @@ pub const Tree = struct {
             meta = 1,
             comment = 2,
             tag = 3,
+            interp = 4,
         } = .text,
         attr_start: ?u32 = null,
         branch: ?[]const Inner = null,
@@ -23,7 +24,7 @@ pub const Tree = struct {
             try writer.print("node[{s}] \"{s}\"", .{ @tagName(value.kind), value.raw });
             if (value.branch) |ns| {
                 for (ns) |n| try writer.print(" {{    {}", .{n});
-                try writer.print("\n}} node[{s}]>", .{ @tagName(value.kind) });
+                try writer.print("\n}} node[{s}]>", .{@tagName(value.kind)});
             }
             try writer.print("", .{});
         }
@@ -45,6 +46,7 @@ const Symbol = enum(u8) {
     pop = '>',
     meta = '!',
     comment = '#',
+    interp = '@',
 };
 
 pub fn countTopNodes(input: []const u8) !usize {
@@ -77,6 +79,17 @@ pub fn countTopNodes(input: []const u8) !usize {
                         peek = toks.peekNextTok();
                         ret += 1;
                     },
+                    .interp => {
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+                        if (peek.tok.kind != .token and peek.tok.kind != .quote) {
+                            return error.ExpectedInterpName;
+                        }
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+
+                        ret += 1;
+                    },
                     .def => {
                         var depth: isize = 0;
                         var push_valid: bool = true;
@@ -102,6 +115,12 @@ pub fn countTopNodes(input: []const u8) !usize {
                                             depth -= 1;
                                         },
                                         .comment, .meta => {},
+                                        .interp => {
+                                            if (!push_valid) {
+                                                @compileLog(push_valid, input, std.fmt.comptimePrint("{}", .{peek}));
+                                                @compileError("TODO: splatting a type into tag attributes");
+                                            }
+                                        },
                                     }
                                 },
                                 .token, .quote => {},
@@ -189,6 +208,7 @@ pub fn parseTopNodeComptime(input: []const u8) ![]const Tree.Inner {
                                             depth -= 1;
                                         },
                                         .comment, .meta => {},
+                                        .interp => {},
                                     }
                                 },
                                 .token, .quote => {},
@@ -226,6 +246,7 @@ pub fn parseTopNodeComptime(input: []const u8) ![]const Tree.Inner {
                                         .comment => {},
                                         .def => return error.UnexpectedOpenTag,
                                         .pop => unreachable,
+                                        else => unreachable,
                                     }
                                 },
                                 .token, .quote => {},
@@ -303,6 +324,23 @@ pub fn parseTopNodeComptime(input: []const u8) ![]const Tree.Inner {
                         toks.current = peek.chop;
                         peek = toks.peekNextTok();
                     },
+                    .interp => {
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+
+                        if (peek.tok.kind != .token and peek.tok.kind != .quote) {
+                            return error.ExpectedInterpSymbol;
+                        }
+
+                        nodes[node_ix] = Tree.Inner{
+                            .kind = .interp,
+                            .raw = peek.tok.raw,
+                        };
+                        node_ix += 1;
+
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+                    },
                 }
             },
             .eof => unreachable,
@@ -312,7 +350,7 @@ pub fn parseTopNodeComptime(input: []const u8) ![]const Tree.Inner {
     // From https://github.com/ziglang/zig/issues/19460#issuecomment-2025813676 (28Mar 2024)
     // Runtime values cannot alias comptime var memory, so we copy our results to a const variable.
     // A comptime const is essentially a static variable from the perspective of the program, so
-    // this here is no issue.
+    // there are no issues with stack lifetimes.
     const ns = nodes[0..nodes.len].*;
     return &ns;
 }

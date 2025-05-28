@@ -28,10 +28,69 @@ const parser = @import("parser.zig");
 const Tree = parser.Tree;
 const Atom = @TypeOf(.atom);
 
+fn countInterp(roots: []const Tree.Inner) usize {
+    var ix = 0;
+    for (roots) |node| {
+        switch (node.kind) {
+            .interp => ix += 1,
+            .tag => if (node.branch) |children| {
+                ix += countInterp(children);
+            },
+            else => {},
+        }
+    }
+    return ix;
+}
+
+fn captureInterps(roots: []const Tree.Inner, out: [][]const u8, ix: *usize) void {
+    for (roots) |node| {
+        switch (node.kind) {
+            .interp => {
+                out[ix.*] = node.raw;
+                ix.* += 1;
+            },
+            .tag => if (node.branch) |children| captureInterps(children, out, ix),
+            else => {},
+        }
+    }
+}
+
 pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
+    const interp = countInterp(roots);
+
+    const interp_args: []const []const u8 = b: {
+        var out: [interp][]const u8 = undefined;
+        var ix: usize = 0;
+        captureInterps(roots, &out, &ix);
+        const iargs = out[0..interp].*;
+        break :b &iargs;
+    };
+
     return struct {
         pub const identifier = @tagName(id);
-        pub fn render(writer: anytype) !void {
+        pub fn render(writer: anytype, args: anytype) !void {
+            const ti = switch (@typeInfo(@TypeOf(args))) {
+                .@"struct" => |s| s.fields,
+                else => |t| @compileError(std.fmt.comptimePrint(
+                    "template[{s}]: args type `{s}` is not supported",
+                    .{ @tagName(id), @tagName(t) },
+                )),
+            };
+            comptime {
+                for (interp_args) |a| {
+                    var found: bool = false;
+                    for (ti) |f| {
+                        if (std.mem.eql(u8, a, f.name)) found = true;
+                    }
+                    if (!found) {
+                        @compileError(std.fmt.comptimePrint(
+                            "template[{s}]: argument `{s}` expected as a field to args",
+                            .{ @tagName(id), a },
+                        ));
+                    }
+                }
+            }
+
             inline for (roots) |node| {
                 const inner = node.raw[0 .. node.attr_start orelse node.raw.len];
                 switch (node.kind) {
@@ -41,10 +100,11 @@ pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
                     .tag => {
                         try writer.print("<{s}>", .{node.raw});
                         if (node.branch) |child| {
-                            try Template(id, child).render(writer);
+                            try Template(id, child).render(writer, .{});
                             try writer.print("</{s}>", .{inner});
                         }
                     },
+                    .interp => try writer.print("{s}", .{@field(args, node.raw)}),
                 }
             }
         }
@@ -70,7 +130,7 @@ const snapshot_tests: []const struct {
     tag: Atom,
     input: []const u8,
     expected: []const u8,
-    args: ?struct { content: []const u8 } = null,
+    args: struct { content: []const u8 = &.{} } = .{},
 } = &.{
     .{
         .tag = .@"text node",
@@ -125,15 +185,15 @@ const snapshot_tests: []const struct {
         ,
     },
     .{
-        .tag = .interp,
+        .tag = .interp_top_level,
         .input =
-        \\<a foo @{.x}| @{ .content }>
+        \\@content
         ,
         .args = .{
             .content = "World",
         },
         .expected =
-        \\<a foo>World</a>
+        \\World
         ,
     },
 };
@@ -155,7 +215,7 @@ test "snapshot" {
         var out_buf = std.ArrayList(u8).init(alc);
         defer out_buf.deinit();
         const w = out_buf.writer();
-        try Template(snapshot.tag, ir.root).render(w);
+        try Template(snapshot.tag, ir.root).render(w, snapshot.args);
         const output = out_buf.items[0..out_buf.items.len];
         try std.testing.expectEqualSlices(u8, snapshot.expected, output);
     }
