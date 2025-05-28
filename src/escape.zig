@@ -1,9 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const str = []const u8;
-const Buffer = @import("big_enough.zig").Buffer;
 
-pub inline fn escapes(ch: u8) ?str {
+pub inline fn escapes(ch: u8) ?[]const u8 {
     return switch (ch) {
         '&' => "&amp;",
         '<' => "&lt;",
@@ -13,24 +11,32 @@ pub inline fn escapes(ch: u8) ?str {
     };
 }
 
-pub fn escapeNeeded(input: str) bool {
+pub fn escapeNeeded(input: []const u8) bool {
     return for (input) |ch| {
         if (escapes(ch)) |_| break true;
     } else false;
 }
 
-pub fn escapeToStr(input: str, output: *Buffer(u8)) struct { len: usize } {
-    const cap = output.inner.len - output.len;
-    assert(input.len < cap);
-    var acc_esc: usize = 0;
+pub fn escapedLen(input: []const u8) usize {
+    var len = 0;
+    for (input) |ch| {
+        len += if (escapes(ch)) |estr| estr.len else 1;
+    }
+    return len;
+}
+
+pub fn escapeToStr(input: []const u8, output: []u8) usize {
+    const elen = escapedLen(input);
+    assert(elen < output.len);
+    var ix: usize = 0;
     for (input) |ch| {
         if (escapes(ch)) |estr| {
-            assert(input.len + acc_esc + estr.len - 1 < cap);
-            output.extend(estr);
-            acc_esc += estr.len - 1;
+            @memcpy(output[ix .. ix + estr.len], estr);
+            ix += estr.len;
         } else {
-            output.push(ch);
+            output[ix] = ch;
+            ix += 1;
         }
     }
-    return .{ .len = input.len + acc_esc };
+    return elen;
 }
