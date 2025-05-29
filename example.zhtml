@@ -13,11 +13,18 @@
         <main #main .flex.justify-center |
             <.max-w-md.lg:max-w-6xl|
                 Main Content
-                @{ .content }
-                @if ({.y}) { <a|> }
-                @if ({.t}) |t| { <a|@{ t }> }
-                @for ({.xs}, 0..) |x, i| { <tag @{x} |@{i}-th node> }
-                @switch ({.xs}, 0..) |x, i| { <tag @{x} |@{i}-th node> }
+                @{content}
+                @if (x) {
+                    <a|@{x}>
+                } else { <> }
+                @if |y| { <a|@{y}> }
+                @for (z) { <tag|@x> }
+                @for (t) { <tag @x| @{i}-th node> }
+                @switch (w) {
+                    .a => { <tag|{w}> }
+                    .b => { <tag|{w}> }
+                    .c => { <tag|{w}> }
+                }
             >
         >
         <footer .flex.justify-center | <.max-w-md.lg:max-w-6xl | Footer Content >>

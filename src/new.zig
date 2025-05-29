@@ -16,10 +16,10 @@
 // }
 //
 // markup :=
-//     ([ident | literal] ws)* // text node
-//   | symbols.def '!' ([ident | literal] ws)* symbols.pinch        // meta node
-//   | symbols.def '!' '-' ws ([ident | literal] ws)* symbols.pinch // comment
-//   | symbols.def ident ([ident | ident '=' literal])* symbols.push markup symbols.pop // actual
+//     ([ident | literal] ws)*                                                          // text
+//   | symbols.def '!' ([ident | literal] ws)* symbols.pinch                            // meta
+//   | symbols.def '!' '-' ws ([ident | literal] ws)* symbols.pinch                     // comment
+//   | symbols.def ident ([ident | ident '=' literal])* symbols.push markup symbols.pop // tag
 const std = @import("std");
 const log = std.log.scoped(.tml);
 const Tokeniser = @import("tokeniser.zig").Tokeniser;
@@ -100,11 +100,28 @@ pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
                     .tag => {
                         try writer.print("<{s}>", .{node.raw});
                         if (node.branch) |child| {
-                            try Template(id, child).render(writer, .{});
+                            try Template(id, child).render(writer, args);
                             try writer.print("</{s}>", .{inner});
                         }
                     },
-                    .interp => try writer.print("{s}", .{@field(args, node.raw)}),
+                    .interp => {
+                        const value = @field(args, node.raw);
+                        const vti: std.builtin.Type = @typeInfo(@TypeOf(value));
+                        switch (vti) {
+                            .comptime_int, .int, .float, .comptime_float => try writer.print("{d}", .{value}),
+                            .bool => try writer.print("{}", .{value}),
+                            .pointer => |p| {
+                                switch (p.size) {
+                                    .slice => try writer.print("{s}", .{value}),
+                                    .one, .many, .c => unreachable,
+                                }
+                            },
+                            else => |t| @compileError(std.fmt.comptimePrint(
+                                "template[{s}]: field `{s}`:  argument type `{s}` not supported",
+                                .{ @tagName(id), node.raw, @tagName(t) },
+                            )),
+                        }
+                    },
                 }
             }
         }
@@ -115,14 +132,16 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const ir = comptime parser.parseTopNodeComptime(snapshot_tests[5].input) catch unreachable;
-    for (ir) |n| {
-        std.log.debug("{}", .{n});
-    }
+    const ir = comptime parser.parseTopNodeComptime(
+        // \\@content
+        \\<a|The content is @content @bar>
+    ) catch unreachable;
     const templ = Template(.interp, ir);
 
     const stdout = std.io.getStdOut().writer();
-    try templ.render(stdout);
+    const foo: []const u8 = "foo";
+    _ = foo;
+    try templ.render(stdout, .{ .content = true, .bar = .{} });
     _ = try stdout.write("\n");
 }
 
@@ -196,12 +215,22 @@ const snapshot_tests: []const struct {
         \\World
         ,
     },
+    .{
+        .tag = .interp_inside,
+        .input =
+        \\<a|@content>
+        ,
+        .args = .{
+            .content = "World",
+        },
+        .expected =
+        \\<a>World</a>
+        ,
+    },
 };
 
-test "snapshot" {
-    const alc = std.testing.allocator;
-
-    const generated_ir: []const Tree = comptime b: {
+comptime {
+    const generated_ir: []const Tree = b: {
         var outs: [snapshot_tests.len]Tree = undefined;
         for (snapshot_tests, 0..) |snapshot, i| {
             outs[i] = .{ .root = parser.parseTopNodeComptime(snapshot.input) catch unreachable };
@@ -209,14 +238,18 @@ test "snapshot" {
         const os = outs[0..snapshot_tests.len].*;
         break :b &os;
     };
-
-    inline for (snapshot_tests, generated_ir) |snapshot, ir| {
-        std.log.debug("{s}", .{@tagName(snapshot.tag)});
-        var out_buf = std.ArrayList(u8).init(alc);
-        defer out_buf.deinit();
-        const w = out_buf.writer();
-        try Template(snapshot.tag, ir.root).render(w, snapshot.args);
-        const output = out_buf.items[0..out_buf.items.len];
-        try std.testing.expectEqualSlices(u8, snapshot.expected, output);
+    for (snapshot_tests, generated_ir) |snapshot, ir| {
+        _ = struct {
+            test {
+                const alc = std.testing.allocator;
+                std.log.debug("{s}", .{@tagName(snapshot.tag)});
+                var out_buf = std.ArrayList(u8).init(alc);
+                defer out_buf.deinit();
+                const w = out_buf.writer();
+                try Template(snapshot.tag, ir.root).render(w, snapshot.args);
+                const output = out_buf.items[0..out_buf.items.len];
+                try std.testing.expectEqualSlices(u8, snapshot.expected, output);
+            }
+        };
     }
 }
