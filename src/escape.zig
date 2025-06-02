@@ -40,3 +40,5 @@ pub fn escapeToStr(input: []const u8, output: []u8) usize {
     }
     return elen;
 }
+
+test "escape_works" {}

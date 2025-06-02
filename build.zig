@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
 
-    inline for (.{"new.zig"}) |file| {
+    inline for (.{ "new.zig", "escape.zig", "parser.zig", "tokeniser.zig" }) |file| {
         const unit_tests = b.addTest(.{
             .root_source_file = b.path("src/" ++ file),
             .target = target,
