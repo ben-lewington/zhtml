@@ -2,31 +2,37 @@
 # a comment #
 <html lang="en" data-fallback .font-sans .antialiased .w-screen |
     <head |
-        <script | document.documentElement.removeAttribute('data-fallback')>
+        <script|document.documentElement.removeAttribute('data-fallback')>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <link href="/global.css" rel="stylesheet">
         <title|My Title>
     >
     <body |
-        <header .flex.justify-center | <.max-w-md.lg:max-w-6xl | Header Content >>
-        <main #main .flex.justify-center |
-            <.max-w-md.lg:max-w-6xl|
+        <header .flex.justify-center |
+            <.max-w-md .lg:max-w-6xl|Header Content>
+        >
+        <main #main .flex .justify-center |
+            <.max-w-md .lg:max-w-6xl|
                 Main Content
                 @{content}
                 @if (x) {
                     <a|@{x}>
-                } else { <> }
+                } @else {
+                    <input @{ input_args }>
+                }
                 @if |y| { <a|@{y}> }
-                @for (z) { <tag|@x> }
-                @for (t) { <tag @x| @{i}-th node> }
+                @for (z) { <tag|@{z}> }
+                @for |z| { <tag|@{z} "@{i}-th node"> }
                 @switch (w) {
-                    .a => { <tag|{w}> }
-                    .b => { <tag|{w}> }
-                    .c => { <tag|{w}> }
+                    .a => { <tag|@{w}> }
+                    .b => { <tag|@{w}> }
+                    .c => { <tag|@{w}> }
                 }
             >
         >
-        <footer .flex.justify-center | <.max-w-md.lg:max-w-6xl | Footer Content >>
+        <footer .flex .justify-center |
+            <.max-w-md .lg:max-w-6xl | Footer Content >
+        >
     >
 >
