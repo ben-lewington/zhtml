@@ -1,20 +1,86 @@
 const std = @import("std");
 const Tokeniser = @import("tokeniser.zig").Tokeniser;
 
-pub const Tree = struct {
-    root: []const Inner,
+pub const NotRecTree = struct {
+    nodes: []const Inner,
+    interps: []const Interp,
 
-    pub const Inner = struct {
+    const Interp = struct {
         raw: []const u8,
         kind: enum(u8) {
-            text = 0,
-            meta = 1,
-            comment = 2,
-            tag = 3,
-            interp = 4,
+            include,
+            arg_simple,
+            arg_attr,
+            arg_if,
+            arg_exists,
+            arg_for,
+            arg_switch,
+        },
+    };
+
+    const View = struct {
+        start: u32,
+        end: u32,
+    };
+    pub const Inner = struct {
+        child_nodes: ?View = null,
+        interps: ?View = null,
+
+        raw: []const u8,
+        kind: enum(u8) {
+            text,
+            meta,
+            comment,
+            tag,
+            interp,
         } = .text,
         attr_start: ?u32 = null,
+
+        pub fn format(value: Inner, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("\n", .{});
+            if (value.branch) |_| {
+                try writer.print("<", .{});
+            }
+            try writer.print("node[{s}] \"{s}\"", .{ @tagName(value.kind), value.raw });
+            if (value.branch) |ns| {
+                for (ns) |n| try writer.print(" {{    {}", .{n});
+                try writer.print("\n}} node[{s}]>", .{@tagName(value.kind)});
+            }
+            try writer.print("", .{});
+        }
+    };
+};
+
+pub const Tree = struct {
+    root: []const Inner,
+    interps: []const Interp,
+
+    const Interp = struct {
+        raw: []const u8,
+        kind: enum(u8) {
+            include,
+            arg_simple,
+            arg_attr,
+            arg_if,
+            arg_exists,
+            arg_for,
+            arg_switch,
+        },
+    };
+
+    pub const Inner = struct {
         branch: ?[]const Inner = null,
+        captures: ?[]const u32 = null,
+
+        raw: []const u8,
+        kind: enum(u8) {
+            text,
+            meta,
+            comment,
+            tag,
+            interp,
+        } = .text,
+        attr_start: ?u32 = null,
 
         pub fn format(value: Inner, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("\n", .{});
@@ -47,6 +113,11 @@ const Symbol = enum(u8) {
     meta = '!',
     comment = '#',
     interp = '@',
+};
+
+const TreeSpecs = struct {
+    num_nodes: usize,
+    num_interps: usize,
 };
 
 pub fn countTopNodes(input: []const u8) !usize {
@@ -134,9 +205,7 @@ pub fn countTopNodes(input: []const u8) !usize {
                             }
                         }
                     },
-                    .pop, .push => {
-                        return error.UnexpectedUnescapedSymbolAtTopNode;
-                    },
+                    .pop, .push => return error.UnexpectedUnescapedSymbolAtTopNode,
                 }
             },
             .eof => unreachable,
@@ -148,12 +217,151 @@ pub fn countTopNodes(input: []const u8) !usize {
     return ret;
 }
 
+pub fn measureTree(input: []const u8) !TreeSpecs {
+    var ret: TreeSpecs = .{
+        .num_nodes = 0,
+        .num_interps = 0,
+    };
+    var toks = Tokeniser(.{}, Symbol){ .input = input };
+
+    var peek = toks.peekNextTok();
+    while (peek.tok.kind != .eof) {
+        switch (peek.tok.kind) {
+            .token, .quote => {
+                toks.current = peek.chop;
+                peek = toks.peekNextTok();
+                while (peek.tok.kind == .token or peek.tok.kind == .quote) {
+                    toks.current = peek.chop;
+                    peek = toks.peekNextTok();
+                }
+                ret.num_nodes += 1;
+            },
+            .symbol => {
+                const sym: Symbol = @enumFromInt(peek.tok.raw[0]);
+                switch (sym) {
+                    .comment, .meta => {
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+                        while (peek.tok.kind != .symbol and peek.tok.raw[0] != @intFromEnum(sym)) {
+                            toks.current = peek.chop;
+                            peek = toks.peekNextTok();
+                        }
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+                        ret.num_nodes += 1;
+                    },
+                    .interp => {
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+                        if (peek.tok.kind != .token and peek.tok.kind != .quote) {
+                            return error.ExpectedInterpName;
+                        }
+                        toks.current = peek.chop;
+                        peek = toks.peekNextTok();
+
+                        ret.num_interps += 1;
+                        ret.num_nodes += 1;
+                    },
+                    .def => {
+                        var depth: isize = 0;
+                        var push_valid: bool = true;
+
+                        while (peek.tok.kind != .eof) {
+                            switch (peek.tok.kind) {
+                                .symbol => {
+                                    const tsym: Symbol = @enumFromInt(peek.tok.raw[0]);
+                                    switch (tsym) {
+                                        .def => {
+                                            if (push_valid) {
+                                                depth += 1;
+                                                push_valid = false;
+                                            } else return error.UnexpectedNodeDefInNodeHeader;
+                                        },
+                                        .push => {
+                                            if (!push_valid) {
+                                                push_valid = true;
+                                            } else return error.UnexpectedPushInNodeBody;
+                                        },
+                                        .pop => {
+                                            if (depth == 0) return error.UnbalancedNode;
+                                            depth -= 1;
+                                        },
+                                        .comment, .meta => {},
+                                        .interp => {
+                                            if (!push_valid) {
+                                                @compileLog(push_valid, input, std.fmt.comptimePrint("{}", .{peek}));
+                                                @compileError("TODO: splatting a type into tag attributes");
+                                            }
+                                        },
+                                    }
+                                },
+                                .token, .quote => {},
+                                .eof => unreachable,
+                            }
+                            toks.current = peek.chop;
+                            peek = toks.peekNextTok();
+                            if (depth == 0) {
+                                ret.num_nodes += 1;
+                                break;
+                            }
+                        }
+                    },
+                    .pop, .push => return error.UnexpectedUnescapedSymbolAtTopNode,
+                }
+            },
+            .eof => unreachable,
+        }
+        toks.current = peek.chop;
+        peek = toks.peekNextTok();
+    }
+
+    return ret;
+}
+
+fn countInterp(roots: []const Tree.Inner) usize {
+    var ix = 0;
+    for (roots) |node| {
+        switch (node.kind) {
+            .interp => ix += 1,
+            .tag => if (node.branch) |children| {
+                ix += countInterp(children);
+            },
+            else => {},
+        }
+    }
+    return ix;
+}
+
+fn captureInterps(roots: []const Tree.Inner, out: [][]const u8, ix: *usize) void {
+    for (roots) |node| {
+        switch (node.kind) {
+            .interp => {
+                out[ix.*] = node.raw;
+                ix.* += 1;
+            },
+            .tag => if (node.branch) |children| captureInterps(children, out, ix),
+            else => {},
+        }
+    }
+}
+
+pub fn parseTree(input: []const u8) !Tree {
+    const nodes = try parseTopNodeComptime(input);
+    return .{
+        .root = nodes,
+        .interps = &.{},
+    };
+}
+
 pub fn parseTopNodeComptime(input: []const u8) ![]const Tree.Inner {
     @setEvalBranchQuota(10000);
-    const node_count = try countTopNodes(input);
+    const dims = try measureTree(input);
 
-    var nodes: [node_count]Tree.Inner = undefined;
+    var nodes: [dims.num_nodes]Tree.Inner = undefined;
     var node_ix: usize = 0;
+
+    // var interps: [dims.num_nodes]Tree.Inner = undefined;
+    // var interp_ix: usize = 0;
 
     var toks = Tokeniser(.{}, Symbol){ .input = input };
 

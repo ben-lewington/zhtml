@@ -42,11 +42,11 @@ fn countInterp(roots: []const Tree.Inner) usize {
     return ix;
 }
 
-fn captureInterps(roots: []const Tree.Inner, out: [][]const u8, ix: *usize) void {
+fn captureInterps(roots: []const Tree.Inner, out: [][:0]const u8, ix: *usize) void {
     for (roots) |node| {
         switch (node.kind) {
             .interp => {
-                out[ix.*] = node.raw;
+                out[ix.*] = node.raw ++ "";
                 ix.* += 1;
             },
             .tag => if (node.branch) |children| captureInterps(children, out, ix),
@@ -55,19 +55,50 @@ fn captureInterps(roots: []const Tree.Inner, out: [][]const u8, ix: *usize) void
     }
 }
 
-pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
-    const interp = countInterp(roots);
+pub const TmplProto = struct {
+    id: []const u8 = "",
+    ir: Tree = .{ .root = &.{}, .interps = &.{} },
+};
 
-    const interp_args: []const []const u8 = b: {
-        var out: [interp][]const u8 = undefined;
-        var ix: usize = 0;
-        captureInterps(roots, &out, &ix);
-        const iargs = out[0..interp].*;
-        break :b &iargs;
-    };
+pub fn Templ(comptime id: Atom, comptime template: []const u8) !type {
+    const tree = try parser.parseTree(template);
 
     return struct {
-        pub const identifier = @tagName(id);
+        const Templ = @This();
+        pub const this = TmplProto{
+            .id = @tagName(id),
+            .ir = tree,
+        };
+        const interp = countInterp(tree.root);
+
+        const interp_args: []const []const u8 = b: {
+            var out: [interp][:0]const u8 = undefined;
+            var ix: usize = 0;
+            captureInterps(tree.root, &out, &ix);
+            const iargs = out[0..interp].*;
+            break :b &iargs;
+        };
+
+        const LinkArgs: type = b: {
+            const fields: []const std.builtin.Type.StructField = l: {
+                var out: [interp]std.builtin.Type.StructField = undefined;
+                for (interp_args, 0..) |a, i| {
+                    out[i] = std.builtin.Type.StructField{
+                        .name = a,
+                        .type = TmplProto,
+                        .is_comptime = true,
+                        .alignment = @alignOf(TmplProto),
+                        .default_value_ptr = null,
+                    };
+                }
+                const iargs = out[0..interp].*;
+                break :l &iargs;
+            };
+            _ = fields;
+
+            break :b struct {};
+        };
+
         pub fn render(writer: anytype, args: anytype) !void {
             const ti = switch (@typeInfo(@TypeOf(args))) {
                 .@"struct" => |s| s.fields,
@@ -90,8 +121,11 @@ pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
                     }
                 }
             }
+            try renderNodes(tree.root, writer, args);
+        }
 
-            inline for (roots) |node| {
+        fn renderNodes(comptime nodes: []const Tree.Inner, writer: anytype, args: anytype) !void {
+            inline for (nodes) |node| {
                 const inner = node.raw[0 .. node.attr_start orelse node.raw.len];
                 switch (node.kind) {
                     .meta => try writer.print("<!{s}>", .{inner}),
@@ -100,7 +134,7 @@ pub fn Template(comptime id: Atom, comptime roots: []const Tree.Inner) type {
                     .tag => {
                         try writer.print("<{s}>", .{node.raw});
                         if (node.branch) |child| {
-                            try Template(id, child).render(writer, args);
+                            try renderNodes(child, writer, args);
                             try writer.print("</{s}>", .{inner});
                         }
                     },
@@ -132,16 +166,16 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const ir = comptime parser.parseTopNodeComptime(
-        // \\@content
-        \\<a|The content is @content @bar>
+    const templ = comptime Templ(
+        .interp,
+        \\<a|The content is @content@bar>
+        ,
     ) catch unreachable;
-    const templ = Template(.interp, ir);
 
     const stdout = std.io.getStdOut().writer();
     const foo: []const u8 = "foo";
     _ = foo;
-    try templ.render(stdout, .{ .content = true, .bar = .{} });
+    try templ.render(stdout, .{ .content = true, .bar = 3 });
     _ = try stdout.write("\n");
 }
 
@@ -230,23 +264,16 @@ const snapshot_tests: []const struct {
 };
 
 comptime {
-    const generated_ir: []const Tree = b: {
-        var outs: [snapshot_tests.len]Tree = undefined;
-        for (snapshot_tests, 0..) |snapshot, i| {
-            outs[i] = .{ .root = parser.parseTopNodeComptime(snapshot.input) catch unreachable };
-        }
-        const os = outs[0..snapshot_tests.len].*;
-        break :b &os;
-    };
-    for (snapshot_tests, generated_ir) |snapshot, ir| {
+    for (snapshot_tests) |snapshot| {
         _ = struct {
+            const templ = Templ(snapshot.tag, snapshot.input);
             test {
                 const alc = std.testing.allocator;
                 std.log.debug("{s}", .{@tagName(snapshot.tag)});
                 var out_buf = std.ArrayList(u8).init(alc);
                 defer out_buf.deinit();
                 const w = out_buf.writer();
-                try Template(snapshot.tag, ir.root).render(w, snapshot.args);
+                try templ.render(w, snapshot.args);
                 const output = out_buf.items[0..out_buf.items.len];
                 try std.testing.expectEqualSlices(u8, snapshot.expected, output);
             }
