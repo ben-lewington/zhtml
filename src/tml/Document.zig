@@ -6,6 +6,7 @@ const Symbol = Parser.Symbol;
 const AttrSymbol = Parser.AttrSymbol;
 const Tokeniser = Parser.Tokeniser;
 const AttrsTokeniser = Parser.AttrsTokeniser;
+const Escaper = @import("../Escaper.zig");
 const Document = @This();
 const Measure = @import("Measure.zig");
 
@@ -68,12 +69,10 @@ pub fn writeHtml(self: *const Document, w: *std.Io.Writer) !void {
 fn writeHtmlDocumentNode(self: *const Document, node: Node, w: *std.Io.Writer) !void {
     switch (node.kind) {
         .meta => {
-            // FIXME: escape??
-            try w.print("<!{s}>", .{ node.content });
+            try w.print("<!{f}>", .{ Escaper{ .input = node.content }});
         },
         .comment => {
-            // FIXME: escape??
-            try w.print("<--{s}-->", .{ node.content });
+            try w.print("<--{f}-->", .{ Escaper{ .input = node.content }});
         },
         .text => {
             var texttoks = @import("toks").Tokeniser(.{}) { .input = node.content };
@@ -81,16 +80,14 @@ fn writeHtmlDocumentNode(self: *const Document, node: Node, w: *std.Io.Writer) !
             var thr: []const u8 = "";
             tokens: switch (peek.tok.kind) {
                 .token => {
-                    // FIXME: escape
-                    try w.print("{s}{s}", .{ thr, peek.tok.raw });
+                    try w.print("{s}{f}", .{ thr, Escaper{ .input = peek.tok.raw }});
                     thr = " ";
                     texttoks.current = peek.chop;
                     peek = texttoks.peekNextTok();
                     continue :tokens peek.tok.kind;
                 },
                 .quote => {
-                    // FIXME: escape
-                    try w.print("{s}{s}", .{ thr, peek.tok.raw[1..peek.tok.raw.len - 1] });
+                    try w.print("{s}{f}", .{ thr, Escaper{ .input = peek.tok.raw[1..peek.tok.raw.len - 1] }});
                     thr = " ";
                     texttoks.current = peek.chop;
                     peek = texttoks.peekNextTok();
@@ -107,7 +104,7 @@ fn writeHtmlDocumentNode(self: *const Document, node: Node, w: *std.Io.Writer) !
                 for (self.attributes[na.@"0"..na.@"1"]) |a| {
                     try w.print(" {s}", .{ a.name });
                     if (a.value) |v| {
-                        try w.print("=\"{s}\"", .{ v });
+                        try w.print("=\"{f}\"", .{ Escaper{ .input = v }});
                     }
                 }
             }
