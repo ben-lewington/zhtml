@@ -5,7 +5,9 @@ const assert = std.debug.assert;
 pub fn Tokeniser(comptime config: struct {
     spacing: []const u8 = " \t\n\r",
     quotes: [2]u8 = "\"\"".*,
-}, comptime Symbols: type) type {
+    Symbols: type = enum(u8) {},
+}) type {
+    const Symbols = config.Symbols;
     const enum_ti = @typeInfo(Symbols).@"enum";
     if (enum_ti.tag_type != u8) @compileError("symbol enum must have a u8 representation");
     const sym_arr = b: {
@@ -223,10 +225,7 @@ const TestSymbols = enum(u8) {
     equals = '=',
 };
 
-const TestTokeniser = Tokeniser(.{
-    .spacing = " \t\n\r",
-    .quotes = "\"\"".*,
-}, TestSymbols);
+const TestTokeniser = Tokeniser(.{ .Symbols = TestSymbols });
 
 const SyntaxSymbol = enum(u8) {
     def = '<',
@@ -237,10 +236,7 @@ const SyntaxSymbol = enum(u8) {
     interp = '@',
 };
 
-const SyntaxTokeniser = Tokeniser(.{
-    .spacing = " \n\r\t",
-    .quotes = "\"\"".*,
-}, SyntaxSymbol);
+const SyntaxTokeniser = Tokeniser(.{ .Symbols = SyntaxSymbol });
 
 test "basic token parsing" {
     var tok = TestTokeniser{

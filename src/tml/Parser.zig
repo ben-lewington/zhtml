@@ -1,11 +1,12 @@
 const std = @import("std");
 const Node = @import("../tml.zig").Node;
 const Document = @import("Document.zig");
-const tokeniser = @import("toks");
-const Tokeniser = tokeniser.Tokeniser(.{}, Symbol);
-const AttrsTokeniser = tokeniser.Tokeniser(.{}, AttrSymbol);
 const Parser = @This();
 const log = std.log.scoped(.tml_parser);
+
+const tokeniser = @import("toks");
+pub const Tokeniser = tokeniser.Tokeniser(.{.Symbols = Symbol});
+pub const AttrsTokeniser = tokeniser.Tokeniser(.{.Symbols = AttrSymbol});
 
 nodes: std.ArrayList(Node),
 attrs: std.ArrayList(Node.Attr),
@@ -288,7 +289,7 @@ pub fn parse(self: *Parser, input: []const u8) !u32 {
         const num_top_nodes = try self.parse(c.input);
 
         if (num_top_nodes > 0) {
-            self.nodes.items[c.parent_ix].children = self.nodes.items[nstart .. nstart + num_top_nodes];
+            self.nodes.items[c.parent_ix].children = .{@intCast(nstart), @intCast(nstart + num_top_nodes)};
         }
     }
 
@@ -354,44 +355,59 @@ fn parseAttrs(self: *Parser, node: *Node, input: []const u8) !void {
         .quote => return error.Unexpected,
     }
 
-    node.attrs = self.attrs.items[attrs_start..self.attrs.items.len];
+    node.attrs = .{ @intCast(attrs_start), @intCast(self.attrs.items.len) };
 }
 
-const behaviour: []const struct { []const u8, []const Node } = &.{
+const behaviour: []const struct { []const u8, Document, []const u8 } = &.{
     .{
-        \\this is a string of tokens
+        \\this is a string of "tokens"
         ,
-        &.{
-            Node{
-                .kind = .text,
-                .content = "this is a string of tokens",
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Node{
+                    .kind = .text,
+                    .content = "this is a string of \"tokens\"",
+                },
             },
+            .top_level_node_count = 1,
         },
+        \\this is a string of tokens
     },
     .{
         \\!doctype html!
         \\#a comment#
         ,
-        &.{
-            Node{
-                .kind = .meta,
-                .content = "doctype html",
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Node{
+                    .kind = .meta,
+                    .content = "doctype html",
+                },
+                Node{
+                    .kind = .comment,
+                    .content = "a comment",
+                },
             },
-            Node{
-                .kind = .comment,
-                .content = "a comment",
-            },
+            .top_level_node_count = 2,
         },
+        \\<!doctype html><--a comment-->
     },
     .{
         \\<a|>
         ,
-        &.{
-            Node{
-                .kind = .tag,
-                .content = "a",
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Node{
+                    .kind = .tag,
+                    .content = "a",
+                },
             },
+            .top_level_node_count = 1,
         },
+        \\<a></a>
     },
     .{
         \\<a href="/"|
@@ -400,65 +416,70 @@ const behaviour: []const struct { []const u8, []const Node } = &.{
         \\  >
         \\>
         ,
-        &.{
-            Node{
-                .kind = .tag,
-                .content = "a",
-                .attrs = &.{
-                    Node.Attr{
-                        .name = "href",
-                        .value = "/",
-                    },
-                },
-                .children = &.{
-                    Node{
-                        .kind = .tag,
-                        .content = "b",
-                        .children = &.{
-                            Node{
-                                .kind = .text,
-                                .content = "Hello",
-                            },
-                        },
-                    },
+        .{
+            .attributes = &.{
+                Node.Attr{
+                    .name = "href",
+                    .value = "/",
                 },
             },
+            .nodes = &.{
+                Node{
+                    .kind = .tag,
+                    .content = "a",
+                    .attrs = .{ 0, 1 },
+                    .children = .{ 1, 2 },
+                },
+                Node{
+                    .kind = .tag,
+                    .content = "b",
+                    .children = .{ 2, 3 },
+                },
+                Node{
+                    .kind = .text,
+                    .content = "Hello",
+                },
+            },
+            .top_level_node_count = 1,
         },
+        \\<a href="/"><b>Hello</b></a>
     },
     .{
         \\<a foo| Hello >
         \\<b bar>
         \\<c bar>
         ,
-        &.{
-            Node{
-                .kind = .tag,
-                .content = "a",
-                .attrs = &.{
-                    Node.Attr{ .name = "foo" },
+        .{
+            .attributes = &.{
+                Node.Attr{.name = "foo"},
+                Node.Attr{.name = "bar"},
+                Node.Attr{.name = "bar"},
+            },
+            .nodes = &.{
+                Node{
+                    .kind = .tag,
+                    .content = "a",
+                    .attrs = .{0, 1},
+                    .children = .{3, 4},
                 },
-                .children = &.{
-                    Node{
-                        .kind = .text,
-                        .content = "Hello",
-                    },
+                Node{
+                    .kind = .tag,
+                    .content = "b",
+                    .attrs = .{1, 2},
+                },
+                Node{
+                    .kind = .tag,
+                    .content = "c",
+                    .attrs = .{2, 3},
+                },
+                Node{
+                    .kind = .text,
+                    .content = "Hello",
                 },
             },
-            Node{
-                .kind = .tag,
-                .content = "b",
-                .attrs = &.{
-                    Node.Attr{ .name = "bar" },
-                },
-            },
-            Node{
-                .kind = .tag,
-                .content = "c",
-                .attrs = &.{
-                    Node.Attr{ .name = "bar" },
-                },
-            },
+            .top_level_node_count = 3,
         },
+        \\<a foo>Hello</a><b bar></b><c bar></c>
     },
 };
 
@@ -475,22 +496,25 @@ comptime {
                     .top_end = null,
                 };
                 defer {
-                    builder.children.deinit(alloc);
-                    builder.attrs.deinit(alloc);
-                    builder.nodes.deinit(alloc);
+                    builder.deinit(alloc);
                 }
-                const num_top_nodes = try builder.parse(bt.@"0");
-                const parsed_top = builder.nodes.items[0..num_top_nodes];
-                std.testing.expect(nodesEqual(parsed_top, bt.@"1")) catch |e| {
-                    log.err("expected: ", .{});
-                    for (parsed_top) |n| {
-                        log.err("{f}", .{n});
-                    }
-                    log.err("got: ", .{});
-                    for (bt.@"1") |n| {
-                        log.err("{f}", .{n});
-                    }
-                    return e;
+                _ = try builder.parse(bt.@"0");
+                const doc: Document = .{
+                    .attributes = builder.attrs.items,
+                    .nodes = builder.nodes.items,
+                    .top_level_node_count = builder.top_end orelse @intCast(builder.nodes.items.len),
+                };
+
+                docsEqual(doc, bt.@"1") catch |err| {
+                    log.err("expected:\n{f}\ngot:\n{f}", .{doc, bt.@"1"});
+                    return err;
+                };
+
+                const html = try std.fmt.allocPrint(alloc, "{f}", .{doc.html()});
+                defer alloc.free(html);
+                std.testing.expectEqualSlices(u8, bt.@"2", html) catch |err| {
+                    log.err("expected:\n{s}\ngot:\n{s}", .{bt.@"2", html});
+                    return err;
                 };
             }
         };
@@ -498,34 +522,13 @@ comptime {
 }
 
 // Tests
-// NOTE: Parser implementation has bugs that need fixing first.
-// Tests are defined below but currently disabled pending parser fixes.
-//
-fn nodesEqual(expected: []const Node, actual: []const Node) bool {
-    if (expected.len != actual.len) return false;
-    for (expected, actual) |exp, act| {
-        if (exp.kind != act.kind) return false;
-        if (!std.mem.eql(u8, exp.content, act.content)) return false;
-
-        // Check attrs
-        const exp_attrs = exp.attrs orelse &.{};
-        const act_attrs = act.attrs orelse &.{};
-        if (exp_attrs.len != act_attrs.len) return false;
-        for (exp_attrs, act_attrs) |ea, aa| {
-            if (!std.mem.eql(u8, ea.name, aa.name)) return false;
-            if (ea.value != null and aa.value != null) {
-                if (!std.mem.eql(u8, ea.value.?, aa.value.?)) return false;
-            } else if ((ea.value == null) != (aa.value == null)) {
-                return false;
-            }
-        }
-
-        // Check children recursively
-        if (exp.children != null and act.children != null) {
-            if (!nodesEqual(exp.children.?, act.children.?)) return false;
-        } else if ((exp.children == null) != (act.children == null)) {
-            return false;
-        }
+fn docsEqual(expected: Document, actual: Document) !void {
+    try std.testing.expectEqual(expected.top_level_node_count, actual.top_level_node_count);
+    for (expected.nodes, actual.nodes) |e, a| {
+        try std.testing.expectEqualDeep(e, a);
     }
-    return true;
+    for (expected.attributes, actual.attributes) |e, a| {
+        try std.testing.expectEqualDeep(e, a);
+    }
 }
+

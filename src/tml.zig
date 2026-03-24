@@ -2,11 +2,13 @@ const std = @import("std");
 pub const Document = @import("tml/Document.zig");
 pub const Parser = @import("tml/Parser.zig");
 
+const Slice = struct { u32, u32 };
+
 pub const Node = struct {
     kind: Kind,
     content: []const u8,
-    attrs: ?[]const Attr = null,
-    children: ?[]const Node = null,
+    attrs: ?Slice = null,
+    children: ?Slice = null,
 
     pub const Kind = enum(u8) {
         /// any string of alphanumeric, whitespace delimited tokens
@@ -39,16 +41,14 @@ pub const Node = struct {
 
     pub fn format(self: Node, w: *std.Io.Writer) !void {
         try w.print("[{}] {s} ", .{ self.kind, self.content });
-        if (self.attrs) |as| for (as) |a| {
-            try w.print("{f} ", .{a});
-        };
+        if (self.attrs) |as| {
+            try w.print("{}-{}", as);
+        }
         if (self.children) |cs| {
-            _ = try w.write("<\n");
-            for (cs) |c| {
-                try w.print("    [{}] {s} ...\n", .{ c.kind, c.content });
-            }
+            try w.print("{}-{}", cs);
             try w.writeByte('>');
         }
+        try w.writeByte('\n');
     }
 };
 

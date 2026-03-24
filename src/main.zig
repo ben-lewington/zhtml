@@ -22,32 +22,61 @@
 //   | symbols.def ident ([ident | ident '=' literal])* symbols.push markup symbols.pop // tag
 const std = @import("std");
 const log = std.log.scoped(.tml);
-const Tokeniser = @import("tokeniser.zig").Tokeniser;
 const Allocator = std.mem.Allocator;
-// const parser = @import("parser.zig");
+const tml = @import("tml");
 // const Tree = parser.Tree;
 // const Templ = @import("template.zig").Templ;
 
+const sut =
+    \\!doctype html!
+    \\<html|
+    \\  <head|
+    \\    <script|
+    \\      console.log('Hello, World')
+    \\    >
+    \\    <meta charset="utf-8">
+    \\    <meta name="viewport" content="width=device-width,initial-scale=1">
+    \\  >
+    \\  <body|
+    \\    <header|Header>
+    \\    <main|Header>
+    \\    <footer|Footer>
+    \\  >
+    \\>
+;
+
+const templ = tml.Document.initComptime(sut) catch unreachable;
+
 pub fn main(init: std.process.Init) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
+    // const alloc = arena.allocator();
 
-    // const templ = comptime Templ(
-    //     .interp,
-    //     \\<a|The content is @content@bar>
-    //     ,
-    // ) catch unreachable;
+    defer arena.deinit();
+    //
+    // var parser: tml.Parser = try .init(alloc, .{
+    //     .total_nodes = 10,
+    //     .total_attributes = 10,
+    //     .total_top_level_children = 10,
+    // });
+    // defer parser.deinit(alloc);
+    //
+    // _ = try parser.parse(sut);
+    //
+    // const d: tml.Document = .{
+    //     .nodes = parser.nodes.items,
+    //     .attributes = parser.attrs.items,
+    //     .top_level_node_count = parser.top_end orelse @intCast(parser.nodes.items.len),
+    // };
 
     var wbuf: [1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writer(init.io, &wbuf);
 
-    // try templ.render(stdout, .{ .content = true, .bar = 3 });
-    _ = try stdout.interface.write("\n");
+    try stdout.interface.print("{f}\n", .{templ.html()});
+    try stdout.flush();
 }
 
 pub fn Template(comptime T: type) type {
     return struct {
         args: T,
-
     };
 }
