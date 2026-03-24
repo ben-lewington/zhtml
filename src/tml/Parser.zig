@@ -5,8 +5,8 @@ const Parser = @This();
 const log = std.log.scoped(.tml_parser);
 
 const tokeniser = @import("toks");
-pub const Tokeniser = tokeniser.Tokeniser(.{.Symbols = Symbol});
-pub const AttrsTokeniser = tokeniser.Tokeniser(.{.Symbols = AttrSymbol});
+pub const Tokeniser = tokeniser.Tokeniser(.{ .Symbols = Symbol });
+pub const AttrsTokeniser = tokeniser.Tokeniser(.{ .Symbols = AttrSymbol });
 
 nodes: std.ArrayList(Node),
 attrs: std.ArrayList(Node.Attr),
@@ -288,9 +288,7 @@ pub fn parse(self: *Parser, input: []const u8) !u32 {
         const nstart = self.nodes.items.len;
         const num_top_nodes = try self.parse(c.input);
 
-        if (num_top_nodes > 0) {
-            self.nodes.items[c.parent_ix].children = .{@intCast(nstart), @intCast(nstart + num_top_nodes)};
-        }
+        self.nodes.items[c.parent_ix].children = .{ @intCast(nstart), @intCast(nstart + num_top_nodes) };
     }
 
     // Return the number of top-level nodes added at THIS level, which only includes
@@ -403,6 +401,7 @@ const behaviour: []const struct { []const u8, Document, []const u8 } = &.{
                 Node{
                     .kind = .tag,
                     .content = "a",
+                    .children = .{ 1, 1 },
                 },
             },
             .top_level_node_count = 1,
@@ -451,26 +450,26 @@ const behaviour: []const struct { []const u8, Document, []const u8 } = &.{
         ,
         .{
             .attributes = &.{
-                Node.Attr{.name = "foo"},
-                Node.Attr{.name = "bar"},
-                Node.Attr{.name = "bar"},
+                Node.Attr{ .name = "foo" },
+                Node.Attr{ .name = "bar" },
+                Node.Attr{ .name = "bar" },
             },
             .nodes = &.{
                 Node{
                     .kind = .tag,
                     .content = "a",
-                    .attrs = .{0, 1},
-                    .children = .{3, 4},
+                    .attrs = .{ 0, 1 },
+                    .children = .{ 3, 4 },
                 },
                 Node{
                     .kind = .tag,
                     .content = "b",
-                    .attrs = .{1, 2},
+                    .attrs = .{ 1, 2 },
                 },
                 Node{
                     .kind = .tag,
                     .content = "c",
-                    .attrs = .{2, 3},
+                    .attrs = .{ 2, 3 },
                 },
                 Node{
                     .kind = .text,
@@ -479,7 +478,7 @@ const behaviour: []const struct { []const u8, Document, []const u8 } = &.{
             },
             .top_level_node_count = 3,
         },
-        \\<a foo>Hello</a><b bar></b><c bar></c>
+        \\<a foo>Hello</a><b bar><c bar>
     },
 };
 
@@ -505,15 +504,15 @@ comptime {
                     .top_level_node_count = builder.top_end orelse @intCast(builder.nodes.items.len),
                 };
 
-                docsEqual(doc, bt.@"1") catch |err| {
-                    log.err("expected:\n{f}\ngot:\n{f}", .{doc, bt.@"1"});
+                docsEqual(bt.@"1", doc) catch |err| {
+                    log.err("expected:\n{f}\ngot:\n{f}", .{ bt.@"1", doc });
                     return err;
                 };
 
                 const html = try std.fmt.allocPrint(alloc, "{f}", .{doc.html()});
                 defer alloc.free(html);
                 std.testing.expectEqualSlices(u8, bt.@"2", html) catch |err| {
-                    log.err("expected:\n{s}\ngot:\n{s}", .{bt.@"2", html});
+                    log.err("expected:\n{s}\ngot:\n{s}", .{ bt.@"2", html });
                     return err;
                 };
             }
@@ -531,4 +530,3 @@ fn docsEqual(expected: Document, actual: Document) !void {
         try std.testing.expectEqualDeep(e, a);
     }
 }
-
