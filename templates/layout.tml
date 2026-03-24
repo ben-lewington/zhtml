@@ -1,0 +1,36 @@
+!doctype html!
+# a comment #
+<html lang="en" data-fallback .font-sans .antialiased .w-screen |
+  <head |
+    <script|
+      document.documentElement.removeAttribute('data-fallback')
+      try {
+          const theme = document.documentElement.getAttribute('data-theme') ||
+              window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', theme)
+      } catch (e) {
+          console.warn(`_start: unable to set up theme variable. got:\n${e}`)
+      }
+    >
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link href="/global.css" rel="stylesheet">
+    <title | My Title >
+  >
+  <body |
+    <header .flex.justify-center |
+      <div .max-w-md .lg:max-w-6xl |
+        Header Content
+      >
+    >
+    <main #main .flex .justify-center |
+      Main Content
+    >
+    <footer .flex .justify-center |
+      <div .max-w-md .lg:max-w-6xl |
+        Footer Content
+      >
+    >
+  >
+>
+
