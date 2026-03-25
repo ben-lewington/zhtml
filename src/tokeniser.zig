@@ -1,6 +1,6 @@
 const std = @import("std");
-const log = std.log;
-const assert = std.debug.assert;
+
+pub const QuotedTokeniser = Tokeniser(.{});
 
 pub fn Tokeniser(comptime config: struct {
     spacing: []const u8 = " \t\n\r",
@@ -24,6 +24,7 @@ pub fn Tokeniser(comptime config: struct {
     };
 
     return struct {
+        pub const Symbol = Symbols;
         input: []const u8,
         current: u32 = 0,
 
@@ -40,25 +41,7 @@ pub fn Tokeniser(comptime config: struct {
                 tok: Token,
                 trim: u32,
                 chop: u32,
-
-                pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                    try writer.print("{}@#{d}->#{d}", .{ value.tok, value.trim, value.chop });
-                }
             };
-
-            pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                if (value.kind == .symbol) {
-                    try writer.print(
-                        "[sym={s}({s})]",
-                        .{ @tagName(@as(Symbols, @enumFromInt(value.raw[0]))), value.raw },
-                    );
-                } else {
-                    try writer.print(
-                        "[{s}=\"{s}\"]",
-                        .{ @tagName(value.kind), value.raw },
-                    );
-                }
-            }
         };
 
         inline fn isOneOf(ch: u8, comptime chs: []const u8) bool {
@@ -88,7 +71,7 @@ pub fn Tokeniser(comptime config: struct {
                     .chop = @intCast(eof),
                 };
             }
-            assert(self.current < eof);
+            std.debug.assert(self.current < eof);
 
             var ix: u32 = self.current;
             var trim: u32 = ix;

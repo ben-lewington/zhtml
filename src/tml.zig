@@ -1,172 +1,247 @@
 const std = @import("std");
 pub const Document = @import("tml/Document.zig");
 pub const Parser = @import("tml/Parser.zig");
+pub const Measure = @import("tml/Measure.zig");
 
-const Slice = struct { u32, u32 };
+const tokeniser = @import("toks");
+pub const TmlTokeniser = tokeniser.Tokeniser(.{ .Symbols = Symbol });
+pub const TmlAttrsTokeniser = tokeniser.Tokeniser(.{ .Symbols = AttrSymbol });
 
-pub const Node = struct {
-    kind: Kind,
-    content: []const u8,
-    attrs: ?Slice = null,
-    children: ?Slice = null,
 
-    pub const Kind = enum(u8) {
-        /// any string of alphanumeric, whitespace delimited tokens
-        text,
-        /// !doctype html!
-        meta,
-        /// # a comment #
-        comment,
-        /// <tag_name (attr="value")* | children >
-        tag,
-    };
+pub const Symbol = enum(u8) {
+    // TODO: attribute parsing
+    /// We open a new node. expect at least a text token (tag_name) after.
+    def = '<',
+    /// We push a new branch into the tree.
+    push = '|',
+    /// We close the last node
+    pop = '>',
+    /// !doctype html!
+    meta = '!',
+    /// #a comment#
+    comment = '#',
+};
 
-    /// by deferring the parsing of child documents, we get the sibling nodes contiguous trivially.
-    pub const Lazy = struct {
-        parent_ix: u32,
-        input: []const u8,
-    };
-
-    pub const Attr = struct {
-        name: []const u8,
-        value: ?[]const u8 = null,
-
-        pub fn format(self: Attr, w: *std.Io.Writer) !void {
-            try w.writeAll(self.name);
-            if (self.value) |v| {
-                try w.print("=\"{s}\"", .{v});
-            }
-        }
-    };
-
-    pub fn format(self: Node, w: *std.Io.Writer) !void {
-        try w.print("[{}] {s} ", .{ self.kind, self.content });
-        if (self.attrs) |as| {
-            try w.print("{}-{}", as);
-        }
-        if (self.children) |cs| {
-            try w.print("{}-{}", cs);
-            try w.writeByte('>');
-        }
-        try w.writeByte('\n');
-    }
+pub const AttrSymbol = enum(u8) {
+    eq = '=',
+    class = '.',
+    id = '#',
 };
 
 test {
     _ = @import("tml/Document.zig");
     _ = @import("tml/Parser.zig");
+    _ = @import("tml/Measure.zig");
+    _ = @import("Escaper.zig");
 }
 
-// const testing = struct {
-//     const esc = @import("escape.zig");
-//     const iparser = @import("parser.zig");
-//     const tokeniser = @import("tokeniser.zig");
-//
-//     comptime {
-//         _ = esc;
-//         _ = iparser;
-//         _ = tokeniser;
-//     }
-//
-//     const snapshot_tests: []const struct {
-//         tag: @EnumLiteral(),
-//         input: []const u8,
-//         expected: []const u8,
-//         args: struct { content: []const u8 = &.{} } = .{},
-//     } = &.{
-//         .{
-//             .tag = .@"text node",
-//             .input =
-//             \\this is a string of tokens
-//             ,
-//             .expected =
-//             \\this is a string of tokens
-//             ,
-//         },
-//         .{
-//             .tag = .@"meta and comments",
-//             .input =
-//             \\!DOCTYPE HTML!
-//             \\#a comment#
-//             ,
-//             .expected =
-//             \\<!DOCTYPE HTML><!--a comment-->
-//             ,
-//         },
-//         .{
-//             .tag = .@"simple tag",
-//             .input =
-//             \\<a|>
-//             ,
-//             .expected =
-//             \\<a></a>
-//             ,
-//         },
-//         .{
-//             .tag = .@"nested tag",
-//             .input =
-//             \\<a href="/"|
-//             \\    <b|
-//             \\       Hello
-//             \\    >
-//             \\>
-//             ,
-//             .expected =
-//             \\<a href="/"><b>Hello</b></a>
-//             ,
-//         },
-//         .{
-//             .tag = .advanced,
-//             .input =
-//             \\<a foo| Hello >
-//             \\<b bar>
-//             \\<c bar>
-//             ,
-//             .expected =
-//             \\<a foo>Hello</a><b bar><c bar>
-//             ,
-//         },
-//         .{
-//             .tag = .interp_top_level,
-//             .input =
-//             \\@content
-//             ,
-//             .args = .{
-//                 .content = "World",
-//             },
-//             .expected =
-//             \\World
-//             ,
-//         },
-//         .{
-//             .tag = .interp_inside,
-//             .input =
-//             \\<a|@content>
-//             ,
-//             .args = .{
-//                 .content = "World",
-//             },
-//             .expected =
-//             \\<a>World</a>
-//             ,
-//         },
-//     };
-//
-//     comptime {
-//         for (snapshot_tests) |snapshot| {
-//             _ = struct {
-//                 const templ = Templ(snapshot.tag, snapshot.input);
-//                 test {
-//                     const alc = std.testing.allocator;
-//                     std.log.debug("{s}", .{@tagName(snapshot.tag)});
-//                     var out_buf = std.ArrayList(u8).init(alc);
-//                     defer out_buf.deinit();
-//                     const w = out_buf.writer();
-//                     try templ.render(w, snapshot.args);
-//                     const output = out_buf.items[0..out_buf.items.len];
-//                     try std.testing.expectEqualSlices(u8, snapshot.expected, output);
-//                 }
-//             };
-//         }
-//     }
-// };
+comptime {
+    for (behaviour_test_cases) |bt| {
+        const test_name, const sut, const expected_measure, const expected_doc, const expected_html = bt;
+        _ = struct {
+            const log = std.log.scoped(test_name);
+            test {
+                const alloc = std.testing.allocator;
+
+                var actual_measure = Measure{};
+                try actual_measure.measureTml(sut);
+
+                try std.testing.expectEqualDeep(expected_measure, actual_measure);
+
+                var builder: Parser = try .init(alloc, actual_measure);
+                defer builder.deinit(alloc);
+
+                _ = try builder.parse(sut);
+
+                const doc: Document = .{
+                    .attributes = builder.attrs.items,
+                    .nodes = builder.nodes.items,
+                    .top_level_node_count = builder.top_end orelse @intCast(builder.nodes.items.len),
+                };
+
+                docsEqual(expected_doc, doc) catch |err| {
+                    log.err("expected:\n{f}\ngot:\n{f}", .{ expected_doc, doc });
+                    return err;
+                };
+
+                const html = try std.fmt.allocPrint(alloc, "{f}", .{doc.html()});
+                defer alloc.free(html);
+                std.testing.expectEqualSlices(u8, expected_html, html) catch |err| {
+                    log.err("expected:\n{s}\ngot:\n{s}", .{ expected_html, html });
+                    return err;
+                };
+            }
+        };
+    }
+}
+
+const behaviour_test_cases: []const struct { @EnumLiteral(), []const u8, Measure, Document, []const u8 } = &.{
+    .{
+        .text_and_quote_string,
+        \\this is a string of "tokens"
+        ,
+        .{
+            .total_nodes = 1,
+            .total_attributes = 0,
+            .total_top_level_children = 0,
+        },
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Document.Node{
+                    .kind = .text,
+                    .content = "this is a string of \"tokens\"",
+                },
+            },
+            .top_level_node_count = 1,
+        },
+        \\this is a string of tokens
+        ,
+    },
+    .{
+        .meta_and_comments,
+        \\!doctype html!
+        \\#a comment#
+        ,
+        .{
+            .total_nodes = 2,
+            .total_attributes = 0,
+            .total_top_level_children = 0,
+        },
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Document.Node{
+                    .kind = .meta,
+                    .content = "doctype html",
+                },
+                Document.Node{
+                    .kind = .comment,
+                    .content = "a comment",
+                },
+            },
+            .top_level_node_count = 2,
+        },
+        \\<!doctype html><--a comment-->
+        ,
+    },
+    .{
+        .empty_tag,
+        \\<a|>
+        ,
+        .{
+            .total_nodes = 1,
+            .total_attributes = 0,
+            .total_top_level_children = 1,
+        },
+        .{
+            .attributes = &.{},
+            .nodes = &.{
+                Document.Node{
+                    .kind = .tag,
+                    .content = "a",
+                    .children = .{ 1, 1 },
+                },
+            },
+            .top_level_node_count = 1,
+        },
+        \\<a></a>
+        ,
+    },
+    .{
+        .nested_tags,
+        \\<a href="/"|
+        \\  <b|
+        \\    Hello
+        \\  >
+        \\>
+        ,
+        .{
+            .total_nodes = 3,
+            .total_attributes = 1,
+            .total_top_level_children = 2,
+        },
+        .{
+            .attributes = &.{
+                Document.Node.Attr{
+                    .name = "href",
+                    .value = "/",
+                },
+            },
+            .nodes = &.{
+                Document.Node{
+                    .kind = .tag,
+                    .content = "a",
+                    .attrs = .{ 0, 1 },
+                    .children = .{ 1, 2 },
+                },
+                Document.Node{
+                    .kind = .tag,
+                    .content = "b",
+                    .children = .{ 2, 3 },
+                },
+                Document.Node{
+                    .kind = .text,
+                    .content = "Hello",
+                },
+            },
+            .top_level_node_count = 1,
+        },
+        \\<a href="/"><b>Hello</b></a>
+        ,
+    },
+    .{
+        .differently_nested_tags,
+        \\<a foo| Hello >
+        \\<b bar>
+        \\<c bar>
+        ,
+        .{
+            .total_nodes = 4,
+            .total_attributes = 3,
+            .total_top_level_children = 1,
+        },
+        .{
+            .attributes = &.{
+                Document.Node.Attr{ .name = "foo" },
+                Document.Node.Attr{ .name = "bar" },
+                Document.Node.Attr{ .name = "bar" },
+            },
+            .nodes = &.{
+                Document.Node{
+                    .kind = .tag,
+                    .content = "a",
+                    .attrs = .{ 0, 1 },
+                    .children = .{ 3, 4 },
+                },
+                Document.Node{
+                    .kind = .tag,
+                    .content = "b",
+                    .attrs = .{ 1, 2 },
+                },
+                Document.Node{
+                    .kind = .tag,
+                    .content = "c",
+                    .attrs = .{ 2, 3 },
+                },
+                Document.Node{
+                    .kind = .text,
+                    .content = "Hello",
+                },
+            },
+            .top_level_node_count = 3,
+        },
+        \\<a foo>Hello</a><b bar><c bar>
+        ,
+    },
+};
+
+fn docsEqual(expected: Document, actual: Document) !void {
+    try std.testing.expectEqual(expected.top_level_node_count, actual.top_level_node_count);
+    for (expected.nodes, actual.nodes) |e, a| {
+        try std.testing.expectEqualDeep(e, a);
+    }
+    for (expected.attributes, actual.attributes) |e, a| {
+        try std.testing.expectEqualDeep(e, a);
+    }
+}

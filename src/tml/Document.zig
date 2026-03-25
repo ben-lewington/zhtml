@@ -1,20 +1,47 @@
 const std = @import("std");
-const Parser = @import("Parser.zig");
-const Node = @import("../tml.zig").Node;
-const TmlParser = @This();
-const Symbol = Parser.Symbol;
-const AttrSymbol = Parser.AttrSymbol;
-const Tokeniser = Parser.Tokeniser;
-const AttrsTokeniser = Parser.AttrsTokeniser;
-const Escaper = @import("../Escaper.zig");
-const Document = @This();
-const Measure = @import("Measure.zig");
 
-/// an unowned slice. backing memory is owned by the Parser (and it's slices by the input)
-attributes: []const Node.Attr,
-/// an unowned slice. backing memory is owned by the Parser (and it's slices by the input)
+const Escaper = @import("../Escaper.zig");
+const Measure = @import("Measure.zig");
+const Parser = @import("Parser.zig");
+const QuotedTokeniser = @import("toks").QuotedTokeniser;
+
+const Document = @This();
+
 nodes: []const Node,
+attributes: []const Node.Attr,
 top_level_node_count: u32,
+
+pub const Node = struct {
+    kind: Kind,
+    content: []const u8,
+    attrs: ?Slice = null,
+    children: ?Slice = null,
+
+    const Slice = struct { u32, u32 };
+
+    pub const Kind = enum(u8) {
+        /// any string of alphanumeric, whitespace delimited tokens
+        text,
+        /// !doctype html!
+        meta,
+        /// # a comment #
+        comment,
+        /// <tag_name (attr="value")* | children >
+        tag,
+    };
+
+    pub const Attr = struct {
+        name: []const u8,
+        value: ?[]const u8 = null,
+
+        pub fn format(self: Attr, w: *std.Io.Writer) !void {
+            try w.writeAll(self.name);
+            if (self.value) |v| {
+                try w.print("=\"{s}\"", .{v});
+            }
+        }
+    };
+};
 
 pub fn initComptime(comptime input: []const u8) !Document {
     @setEvalBranchQuota(1_000_000);
@@ -26,7 +53,7 @@ pub fn initComptime(comptime input: []const u8) !Document {
     };
     var nodes: [specs.total_nodes]Node = undefined;
     var attrs: [specs.total_attributes]Node.Attr = undefined;
-    var children: [specs.total_top_level_children]Node.Lazy = undefined;
+    var children: [specs.total_top_level_children]Parser.Lazy = undefined;
 
     var parser = Parser{
         .nodes = .initBuffer(&nodes),
@@ -69,25 +96,25 @@ pub fn writeHtml(self: *const Document, w: *std.Io.Writer) !void {
 fn writeHtmlDocumentNode(self: *const Document, node: Node, w: *std.Io.Writer) !void {
     switch (node.kind) {
         .meta => {
-            try w.print("<!{f}>", .{ Escaper{ .input = node.content }});
+            try w.print("<!{f}>", .{ Escaper.init(node.content)});
         },
         .comment => {
-            try w.print("<--{f}-->", .{ Escaper{ .input = node.content }});
+            try w.print("<--{f}-->", .{ Escaper.init(node.content)});
         },
         .text => {
-            var texttoks = @import("toks").Tokeniser(.{}) { .input = node.content };
+            var texttoks = QuotedTokeniser { .input = node.content };
             var peek = texttoks.peekNextTok();
             var thr: []const u8 = "";
             tokens: switch (peek.tok.kind) {
                 .token => {
-                    try w.print("{s}{f}", .{ thr, Escaper{ .input = peek.tok.raw }});
+                    try w.print("{s}{f}", .{ thr, Escaper.init(peek.tok.raw)});
                     thr = " ";
                     texttoks.current = peek.chop;
                     peek = texttoks.peekNextTok();
                     continue :tokens peek.tok.kind;
                 },
                 .quote => {
-                    try w.print("{s}{f}", .{ thr, Escaper{ .input = peek.tok.raw[1..peek.tok.raw.len - 1] }});
+                    try w.print("{s}{f}", .{ thr, Escaper.init(peek.tok.raw[1..peek.tok.raw.len - 1])});
                     thr = " ";
                     texttoks.current = peek.chop;
                     peek = texttoks.peekNextTok();
@@ -104,7 +131,7 @@ fn writeHtmlDocumentNode(self: *const Document, node: Node, w: *std.Io.Writer) !
                 for (self.attributes[na.@"0"..na.@"1"]) |a| {
                     try w.print(" {s}", .{ a.name });
                     if (a.value) |v| {
-                        try w.print("=\"{f}\"", .{ Escaper{ .input = v }});
+                        try w.print("=\"{f}\"", .{ Escaper.init(v)});
                     }
                 }
             }
@@ -140,143 +167,4 @@ pub fn format(self: Document, w: *std.Io.Writer) !void {
             }
         }
     }
-}
-
-// Tests for Measure
-const testing = std.testing;
-
-test "Measure: count single text node" {
-    var specs: Measure = .{};
-    try specs.measureTml("hello world");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count multiple text nodes" {
-    var specs: Measure = .{};
-    try specs.measureTml("hello world foo bar");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count simple tag without children" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div>");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count tag with text child" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div|hello>");
-    try testing.expectEqual(@as(u32, 2), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 1), specs.total_top_level_children);
-}
-
-test "Measure: count tag with single attribute" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div id=\"test\">");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 1), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count tag with multiple attributes" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div id=\"test\" class=\"container\" disabled>");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 3), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count tag with attributes and children" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div id=\"test\"|hello>");
-    try testing.expectEqual(@as(u32, 2), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 1), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 1), specs.total_top_level_children);
-}
-
-test "Measure: count nested tags" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div|<span|hello>>");
-    try testing.expectEqual(@as(u32, 3), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 2), specs.total_top_level_children);
-}
-
-test "Measure: count multiple sibling tags" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div><span><p>");
-    try testing.expectEqual(@as(u32, 3), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count deeply nested structure" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div|<p|<span|text>>>");
-    try testing.expectEqual(@as(u32, 4), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 3), specs.total_top_level_children);
-}
-
-test "Measure: count complex structure with mixed attributes and children" {
-    var specs: Measure = .{};
-    try specs.measureTml("<div id=\"root\"|<p class=\"text\"|hello><span data-attr=\"val\"|world>>");
-    try testing.expectEqual(@as(u32, 5), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 3), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 3), specs.total_top_level_children);
-}
-
-test "Measure: count meta declarations" {
-    var specs: Measure = .{};
-    try specs.measureTml("!doctype html!");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count comments" {
-    var specs: Measure = .{};
-    try specs.measureTml("#this is a comment#");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count mixed meta and tags" {
-    var specs: Measure = .{};
-    try specs.measureTml("!doctype html!<div><p>");
-    try testing.expectEqual(@as(u32, 3), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count attributes with values" {
-    var specs: Measure = .{};
-    try specs.measureTml("<input type=\"text\" placeholder=\"Enter name\">");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 2), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
-}
-
-test "Measure: count mixed content structure" {
-    var specs: Measure = .{};
-    try specs.measureTml("hello <div|world> <span|text> foo");
-    try testing.expectEqual(@as(u32, 6), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 0), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 2), specs.total_top_level_children);
-}
-
-test "Measure: count attributes with mixed syntax" {
-    var specs: Measure = .{};
-    try specs.measureTml("<button disabled checked id=\"btn\">");
-    try testing.expectEqual(@as(u32, 1), specs.total_nodes);
-    try testing.expectEqual(@as(u32, 3), specs.total_attributes);
-    try testing.expectEqual(@as(u32, 0), specs.total_top_level_children);
 }
