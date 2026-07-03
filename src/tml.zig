@@ -9,7 +9,6 @@ pub const TmlAttrsTokeniser = tokeniser.Tokeniser(.{ .Symbols = AttrSymbol });
 
 
 pub const Symbol = enum(u8) {
-    // TODO: attribute parsing
     /// We open a new node. expect at least a text token (tag_name) after.
     def = '<',
     /// We push a new branch into the tree.

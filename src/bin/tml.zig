@@ -39,7 +39,7 @@ const sut =
     \\  >
     \\  <body|
     \\    <header|Header>
-    \\    <main|Header>
+    \\    <main|Main Content>
     \\    <footer|Footer>
     \\  >
     \\>
